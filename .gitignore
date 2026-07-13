@@ -1,0 +1,6 @@
+# keel — transient / per-install state; never shared or committed
+.introduced
+.keel/
+__pycache__/
+*.pyc
+.DS_Store
