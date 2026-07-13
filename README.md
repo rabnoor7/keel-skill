@@ -10,7 +10,7 @@ router that the CLI enforces.
 
 ## Install
 
-**Option A — ask Claude Code (recommended).** Drop this `keel/` folder into a Claude Code session and say:
+**Option A — ask Claude Code (recommended).** Drop this `keel-skill/` folder into a Claude Code session and say:
 *"install this keel skill."* Claude copies it into `~/.claude/skills/keel` and shows you a one-time
 introduction. (`INSTALL.md` is the instruction file Claude follows.)
 
@@ -18,7 +18,7 @@ introduction. (`INSTALL.md` is the instruction file Claude follows.)
 ```bash
 ./install.sh          # copies to ~/.claude/skills/keel and prints the intro
 ```
-or manually: `cp -R keel ~/.claude/skills/keel`
+or manually: `cp -R keel-skill ~/.claude/skills/keel`
 
 Requirements: Python 3 (standard library only). Nothing to `pip install`.
 
@@ -34,7 +34,7 @@ python3 ~/.claude/skills/keel/scripts/docs.py --help
 
 Zip the folder and send it — the recipient installs it the same way:
 ```bash
-zip -r keel.zip keel -x '*/.git/*' '*/.introduced' '*/__pycache__/*' '*/.DS_Store'
+zip -r keel-skill.zip keel-skill -x '*/.git/*' '*/.introduced' '*/__pycache__/*' '*/.DS_Store'
 ```
 The one-time intro fires fresh on the recipient's machine: the `.introduced` marker is per-install and
 never travels in the zip.
