@@ -14,7 +14,7 @@ Global prefs: ~/keel/preferences.md.
 Commands: init · rehydrate · hydrate · profile · decision · journal · supersede · contradictions · contract ·
           verify · hygiene · friction · clarify-depth · claim · whiteboard · search · read · prefs · state ·
           layout · feedback · run · sink · stance · escalate · ask · match · preserve · orphans · smoke ·
-          accept · route · budget · critique · coverage · livetest · handoff
+          accept · route · critique · coverage · livetest · handoff
           (--version prints the installed version)
 """
 import argparse, os, sys, json, re, hashlib, time, datetime, glob, platform
@@ -765,7 +765,16 @@ fails = []
 #   pool = [r for r in rows if applies(r)]; filled = sum(1 for r in pool if (r.get(field) or "").strip())
 #   frac = filled/max(1,len(pool)); print(f"{field:16} {filled}/{len(pool)} ({frac:.0%})")
 #   if frac < thr: fails.append(field)
-# --- PROVENANCE: every DERIVED datum carries a source pointer; rows without one FAIL. ---
+# --- PROVENANCE (tabular): every row carries source + timestamp; missing/stale rows FAIL. ---
+# REQUIRE = ("source", "fetched_at"); FRESH_DAYS = 30   # adapt column names per project
+# import datetime
+# for i, r in enumerate(rows, 2):
+#   if any(not (r.get(c) or "").strip() for c in REQUIRE): fails.append(f"row {i}: missing provenance")
+#   else:
+#     try:
+#       age = (datetime.datetime.now() - datetime.datetime.fromisoformat(r["fetched_at"][:19])).days
+#       if age > FRESH_DAYS: fails.append(f"row {i}: stale ({age}d)")
+#     except ValueError: fails.append(f"row {i}: unparseable fetched_at")
 # --- REGRESSION ASSERTIONS: one per fixed bug so it can't silently return. ---
 # assert all(len(r["reviews"]) >= min(int(r["review_count"]), 20) for r in rows), "reviews truncated (regressed)"
 if fails:
@@ -781,37 +790,6 @@ def cmd_verify(a):
         if not os.path.exists(ap):
             open(ap, 'w').write(AUDIT_TMPL)
         print(f'verify init: {os.path.relpath(ap, ROOT)} — fill in field-level + provenance + regression checks.')
-    elif a.action == 'batch':
-        if not a.cmd or not a.every:
-            sys.exit('verify batch --cmd "<small per-batch audit>" --every N   (circuit breaker for long runs)')
-        json.dump({'cmd': a.cmd, 'every': a.every}, open(BATCH_CFG, 'w'))
-        print(f'verify batch: every {a.every} run-marks → `{a.cmd}`; a failure HALTS the run (circuit breaker).')
-    elif a.action == 'provenance':
-        if not a.file or not a.require:
-            sys.exit('verify provenance <file.csv> --require col1,col2 [--fresh-days N]')
-        import csv as _csv
-        rows = list(_csv.DictReader(open(os.path.join(ROOT, a.file), encoding='utf-8')))
-        req = [c.strip() for c in a.require.split(',')]
-        datecol = next((c for c in req if 'date' in c.lower() or c.lower().endswith('_at')), None)
-        missing, stale = [], []
-        for i, row in enumerate(rows, 2):
-            if any(not (row.get(c) or '').strip() for c in req):
-                missing.append(i)
-            elif a.fresh_days and datecol:
-                try:
-                    dt = datetime.datetime.fromisoformat((row.get(datecol) or '').strip()[:19])
-                    if (datetime.datetime.now() - dt).days > a.fresh_days:
-                        stale.append(i)
-                except ValueError:
-                    stale.append(i)
-        if missing or stale:
-            print(f'[!!] PROVENANCE — {a.file}: {len(missing)} row(s) missing {req}'
-                  + (f', {len(stale)} stale/unparseable (>{a.fresh_days}d)' if a.fresh_days else '')
-                  + f'   e.g. rows {(missing + stale)[:6]}')
-            print('    a datum without source + timestamp is a claim, not a fact — untrusted until it carries both. (exit 1)')
-            sys.exit(1)
-        print(f'verify provenance: ✅ {len(rows)} row(s) — all carry {req}'
-              + (f', all fresh ≤{a.fresh_days}d' if a.fresh_days else '') + '.')
     elif a.action == 'run':
         if not os.path.exists(ap):
             sys.exit('no audit — run: verify init')
@@ -1026,14 +1004,10 @@ def _run_state(rid):
     if not rows:
         return None
     man = rows[0]
-    items, closed, halted, last_ts = {}, False, False, man.get('ts', 0)
+    items, closed, last_ts = {}, False, man.get('ts', 0)
     for r in rows[1:]:
         if r.get('close'):
             closed = True
-        elif r.get('halt'):
-            halted = True
-        elif r.get('halt_cleared'):
-            halted = False
         elif r.get('item'):
             items[r['item']] = r; last_ts = r.get('ts', last_ts)
     done = sorted(i for i, r in items.items() if r.get('status') == 'done')
@@ -1044,7 +1018,7 @@ def _run_state(rid):
     pending = ([i for i in universe if i not in items] if universe
                else max(0, total - len(done) - len(skip)))
     return {'man': man, 'done': done, 'failed': failed, 'skip': skip, 'pending': pending,
-            'total': total, 'closed': closed, 'halted': halted, 'last_ts': last_ts}
+            'total': total, 'closed': closed, 'last_ts': last_ts}
 
 
 def _open_runs():
@@ -1090,18 +1064,6 @@ def cmd_run(a):
         _append_jsonl(os.path.join(RUNS, a.run_id + '.jsonl'),
                       {'item': a.item, 'status': a.status or 'done', 'by': a.by, 'ts': time.time()})
         print(f'run {a.run_id}: {a.item} → {a.status or "done"}' + (f' (by {a.by})' if a.by else ''))
-        if os.path.exists(BATCH_CFG):  # circuit breaker: audit WHILE it runs, halt when it rots
-            cfg = json.load(open(BATCH_CFG))
-            marks = sum(1 for r_ in _load_jsonl(os.path.join(RUNS, a.run_id + '.jsonl'))[1:] if r_.get('item'))
-            if cfg.get('every') and marks % cfg['every'] == 0:
-                print(f'verify batch: {marks} marks — running the per-batch audit…')
-                if os.system(cfg['cmd']) != 0:
-                    _append_jsonl(os.path.join(RUNS, a.run_id + '.jsonl'),
-                                  {'halt': True, 'reason': 'batch audit failed', 'ts': time.time()})
-                    print(f'[!!] CIRCUIT BREAKER — batch audit FAILED at {marks} marks; run {a.run_id} HALTED. '
-                          'Fix the rot, then `run resume ' + a.run_id + ' --clear-halt`. (exit 1)')
-                    sys.exit(1)
-                print('verify batch: ✅ batch clean — continue.')
     elif a.action in ('status', 'resume', 'close'):
         if not a.run_id:
             sys.exit(f'run {a.action} <run-id>')
@@ -1113,13 +1075,6 @@ def cmd_run(a):
             _append_jsonl(os.path.join(RUNS, a.run_id + '.jsonl'), {'close': True, 'ts': time.time()})
             print(f'run {a.run_id} closed ({len(s["done"])} done, {npend} pending abandoned).'); return
         if a.action == 'resume':
-            if s.get('halted'):
-                if getattr(a, 'clear_halt', False):
-                    _append_jsonl(os.path.join(RUNS, a.run_id + '.jsonl'), {'halt_cleared': True, 'ts': time.time()})
-                    print('# halt cleared — resuming.', file=sys.stderr)
-                else:
-                    sys.exit(f'run {a.run_id} is HALTED (batch audit failed mid-run). Fix the rot first, '
-                             f'then: run resume {a.run_id} --clear-halt')
             if isinstance(s['pending'], list):
                 for i in s['pending'] + s['failed']:
                     print(i)
@@ -1183,33 +1138,19 @@ def cmd_sink(a):
         rec = set(_read(recp).split())
         rows = _load_jsonl(stream)
         new = [r for r in rows if r.get('hash') not in rec]
-        merged, refused = 0, 0
+        merged = 0
         for r in new:
             tgt = r.get('target')
             if not tgt:
                 continue
             payload = r.get('payload') or (_read(r['blob']) if r.get('blob') else '')
             tp = os.path.join(ROOT, tgt)
-            if tgt.endswith('.csv') and os.path.exists(tp):
-                # CSV-aware: never duplicate the header; refuse column-count mismatches loudly
-                header = _read(tp).splitlines()[0] if _read(tp).strip() else ''
-                lines = [l for l in payload.splitlines() if l.strip() and l.strip() != header.strip()]
-                bad = [l for l in lines if header and l.count(',') != header.count(',')]
-                if bad:
-                    refused += 1
-                    print(f'  [!] REFUSED {r["hash"]}: {len(bad)} row(s) have {bad[0].count(",") + 1} column(s), '
-                          f'target has {header.count(",") + 1} — fix the payload; not corrupting {tgt}.')
-                    continue
-                payload = '\n'.join(lines)
-                if not payload:
-                    rec.add(r['hash']); continue
             _ensure(os.path.dirname(tp) or ROOT)
             with open(tp, 'a', encoding='utf-8') as f:
                 f.write(payload.rstrip('\n') + '\n')
             rec.add(r['hash']); merged += 1
         open(recp, 'w').write('\n'.join(sorted(rec)))
-        print(f'sink import {a.stream}: {len(rows)} buffered → {merged} new merged, {len(rows) - len(new)} already present'
-              + (f', {refused} REFUSED (column mismatch)' if refused else '') + '.')
+        print(f'sink import {a.stream}: {len(rows)} buffered → {merged} new merged, {len(rows) - len(new)} already present.')
         ap = os.path.join(VERIFY_DIR, 'audit.py')
         if merged and os.path.exists(ap):  # catch what prevention missed — run the repo's own audit
             print('post-merge verify (this repo has an audit):')
@@ -1322,7 +1263,6 @@ def _save_asks(rows):
 
 # ---------------- THIN SLICES round 4 (tranche B): batch · coverage · livetest · substrate · handoff · provenance ----------------
 
-BATCH_CFG = os.path.join(STATE, 'verify', 'batch.json')
 COVERAGE_DIR = os.path.join(STATE, 'coverage')
 LIVETEST = os.path.join(STATE, 'livetest.json')
 
@@ -1436,13 +1376,11 @@ def cmd_handoff(a):
         print(f'handoff #{a.id} acked.')
 
 
-# ---------------- THIN SLICES round 3: accept · route · budget · critique · coverage · livetest · handoff ----------------
+# ---------------- THIN SLICES round 3: accept · route · critique · coverage · livetest · handoff ----------------
 
 ACCEPT_DIR = os.path.join(DOCS, 'acceptance')
 ROUTING = os.path.join(DOCS, 'routing.md')
 SESSION_MODEL = os.path.join(STATE, 'session_model')
-BUDGET = os.path.join(STATE, 'budget.jsonl')
-BUDGET_CAP = os.path.join(STATE, 'budget_cap')
 CRITIQUE = os.path.join(STATE, 'critique.jsonl')
 
 
@@ -1515,34 +1453,6 @@ def cmd_route(a):
             sys.exit(1)
         print(f'route check: ✅ every contract item matches the policy for "{sess}".')
 
-
-def cmd_budget(a):
-    if a.action == 'cap':
-        _ensure(STATE); _ensure_keel_ignored()
-        open(BUDGET_CAP, 'w').write(str(a.usd))
-        print(f'budget cap: ${a.usd:g} (persists across sessions)')
-    elif a.action == 'estimate':
-        if not os.path.exists(CONTRACT):
-            sys.exit('budget estimate: no contract set — the estimate binds to a specific plan')
-        c = json.load(open(CONTRACT))
-        _append_jsonl(BUDGET, {'kind': 'estimate', 'usd': a.usd, 'contract': c.get('hash'),
-                               'basis': a.basis or '', 'ts': time.time()})
-        print(f'budget estimate: ${a.usd:g} bound to contract {c.get("hash")}'
-              + (f' — basis: {a.basis}' if a.basis else ''))
-    elif a.action == 'record':
-        _append_jsonl(BUDGET, {'kind': 'actual', 'usd': a.usd, 'item': a.item or '', 'ts': time.time()})
-        print(f'budget record: ${a.usd:g}' + (f' — {a.item}' if a.item else ''))
-    elif a.action == 'check':
-        cap = float(_read(BUDGET_CAP).strip() or 0)
-        if not cap:
-            print('budget check: no cap set (`budget cap --usd N`) — nothing to enforce.'); return
-        spent = sum(r.get('usd', 0) for r in _load_jsonl(BUDGET) if r.get('kind') == 'actual')
-        rem = cap - spent
-        print(f'CAP ${cap:g} · SPENT ${spent:g} · REMAINING ${rem:g} ({max(0, rem / cap):.0%} of cap)')
-        if rem <= 0.25 * cap:
-            print('[!] CONSERVE MODE — targeted extracts over full re-runs; ask before any fan-out. (exit 1)')
-            sys.exit(1)
-        print('budget check: ✅ within budget.')
 
 
 def cmd_critique(a):
@@ -1771,9 +1681,7 @@ def main():
     p = sub.add_parser('contract'); p.add_argument('action', choices=['set', 'approve', 'check'])
     p.add_argument('--content'); p.add_argument('--from', dest='from_file'); p.add_argument('--approved', action='store_true')
     p.add_argument('--window', type=int); p.set_defaults(fn=cmd_contract)
-    p = sub.add_parser('verify'); p.add_argument('action', choices=['init', 'run', 'done', 'sync', 'batch', 'provenance'])
-    p.add_argument('file', nargs='?'); p.add_argument('--cmd'); p.add_argument('--every', type=int)
-    p.add_argument('--require'); p.add_argument('--fresh-days', dest='fresh_days', type=int); p.set_defaults(fn=cmd_verify)
+    p = sub.add_parser('verify'); p.add_argument('action', choices=['init', 'run', 'done', 'sync']); p.set_defaults(fn=cmd_verify)
     p = sub.add_parser('coverage'); p.add_argument('action', choices=['init', 'check']); p.add_argument('source')
     p.add_argument('--against'); p.set_defaults(fn=cmd_coverage)
     p = sub.add_parser('livetest'); p.add_argument('action', choices=['arm', 'confirm', 'reject', 'status'])
@@ -1791,7 +1699,7 @@ def main():
     p = sub.add_parser('run'); p.add_argument('action', choices=['start', 'mark', 'status', 'resume', 'close'])
     p.add_argument('run_id', nargs='?'); p.add_argument('item', nargs='?'); p.add_argument('--label')
     p.add_argument('--items'); p.add_argument('--count', type=int); p.add_argument('--status', choices=['done', 'failed', 'skip'])
-    p.add_argument('--by'); p.add_argument('--clear-halt', dest='clear_halt', action='store_true'); p.set_defaults(fn=cmd_run)
+    p.add_argument('--by'); p.set_defaults(fn=cmd_run)
     p = sub.add_parser('sink'); p.add_argument('action', choices=['add', 'status', 'import'])
     p.add_argument('--stream', default='default'); p.add_argument('--target'); p.add_argument('--provenance')
     p.add_argument('--data'); p.add_argument('--from', dest='from_file'); p.set_defaults(fn=cmd_sink)
@@ -1811,8 +1719,6 @@ def main():
     p.add_argument('type'); p.add_argument('--criterion'); p.set_defaults(fn=cmd_accept)
     p = sub.add_parser('route'); p.add_argument('action', choices=['set', 'model', 'check'])
     p.add_argument('klass', nargs='?'); p.add_argument('--keywords'); p.add_argument('--model'); p.set_defaults(fn=cmd_route)
-    p = sub.add_parser('budget'); p.add_argument('action', choices=['cap', 'estimate', 'record', 'check'])
-    p.add_argument('--usd', type=float); p.add_argument('--item'); p.add_argument('--basis'); p.set_defaults(fn=cmd_budget)
     p = sub.add_parser('critique'); p.add_argument('action', choices=['assume', 'research', 'alt', 'check'])
     p.add_argument('--claim'); p.add_argument('--bearing', choices=['load', 'minor']); p.add_argument('--status', choices=['untested', 'tested', 'user-confirmed'])
     p.add_argument('--angle'); p.add_argument('--finding'); p.add_argument('--source'); p.add_argument('--gap')

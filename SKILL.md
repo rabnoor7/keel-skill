@@ -102,9 +102,10 @@ approved the plan first.
 - **Typed deliverables close against their recorded bar.** If a deliverable's type has an acceptance
   registry (`docs/acceptance/<type>.md`), run `docs.py accept check <type>` and attest each criterion in
   the done summary — the user owns additions to the bar; an empty bar for a claimed type is a refusal.
-- **If a routing policy exists** (`docs/routing.md`), run `docs.py route check` when the contract is set —
-  mis-routed items are flagged advisory ("delegate or justify"); keel cannot switch models and never
-  pretends to.
+- **If a routing policy exists** (`docs/routing.md`), declare the session model at orient
+  (`docs.py route model --model <name>`) and run `docs.py route check` when the contract is set —
+  mis-routed items are flagged advisory ("delegate or justify"). Known-crude keyword matching; keel
+  cannot switch models and never pretends to.
 - **Pivotal / irreversible / costly calls that are genuinely the USER's → `docs.py escalate raise`.** Before
   any irreversible or externally-visible act (sending real messages, destructive ops on protected data,
   launching an expensive run), when the call is the user's to make: raise an escalation with the options and
@@ -125,11 +126,6 @@ deliverable (it fails if the audit never ran, failed, or the deliverable changed
 flags audit fields that drifted from data-model.md; the audit must model *legitimate* absence per field
 (a no-minimum row's 0, a 0-review row's blank rating), not one blanket threshold — a gate that cries wolf
 gets ignored. And every bug you fix becomes a permanent regression assertion. See `references/verify.md`.
-- **Long runs get audited WHILE they run.** Configure `verify batch --cmd "<small audit>" --every N` — a
-  failing per-batch audit HALTS the run (circuit breaker; `run resume --clear-halt` after fixing) instead
-  of discovering at hour six that everything since hour one is rot.
-- **Tabular deliverables carry provenance.** `verify provenance <file.csv> --require source,fetched_at
-  [--fresh-days N]` — a row without source + timestamp is a claim, not a fact.
 - **Output that answers an external source gets a coverage check.** `coverage init <source>` then
   `coverage check <source> --against <output>` before done — every unaddressed point is listed by name
   (keyword-level: it proves absence of coverage, not quality).
@@ -161,8 +157,8 @@ clarify-depth · contradictions · claim · whiteboard · supersede · decision 
 layout · feedback · run (start/mark/status/resume/close) · sink (add/status/import) · stance (freeze/confirm) ·
 escalate (raise/resolve) · ask (add/bump/close --evidence) · match · preserve (snapshot/check) ·
 orphans · smoke (set/run/gate) · accept (add/show/check) · route (set/model/check) ·
-budget (cap/estimate/record/check) · critique (assume/research/alt/check) · coverage (init/check) ·
-livetest (arm/confirm/reject) · handoff (send/list/ack) · verify batch · verify provenance`
+critique (assume/research/alt/check) · coverage (init/check) · livetest (arm/confirm/reject) ·
+handoff (send/list/ack)`
 — run `python3 scripts/docs.py --help` · `docs.py --version` reports the installed version.
 
 ## Standing defaults
