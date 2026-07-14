@@ -287,6 +287,24 @@ def _doc_inventory():
     return tagged
 
 
+def _anchor_rot():
+    """Content-level anchor rot the mtime check can't see: pointers at a different skill, machine-specific
+    absolute paths outside this repo, referenced repo files that no longer exist. First ~30 lines only;
+    deterministic string checks, no semantics claimed. (Observed live: an anchor instructing the wrong skill.)"""
+    if not os.path.exists(ANCHOR):
+        return []
+    rots, head = [], '\n'.join(_read(ANCHOR).splitlines()[:30])
+    for m in re.finditer(r'skills/([a-z0-9_\-]+)/', head):
+        if m.group(1) != 'keel':
+            rots.append(f'points at skill "{m.group(1)}" — not keel; update the rehydration pointer')
+    for m in re.finditer(r'(/Users/[^\s`"\')\]]+|/home/[^\s`"\')\]]+)', head):
+        p = m.group(1).rstrip('.,;:')
+        if not os.path.abspath(p).startswith(ROOT):
+            rots.append(f'machine-specific absolute path: {p[:60]} — breaks on any other machine/clone')
+    seen = set()
+    return [r for r in rots if not (r in seen or seen.add(r))][:4]
+
+
 def _anchor_staleness():
     if not os.path.exists(ANCHOR):
         return None
@@ -451,6 +469,14 @@ def cmd_rehydrate(a):
         print(f'\n[!] ANCHOR STALE — {len(stale)} file(s) changed after the anchor: {stale[:6]}')
         print('    → the first thing a session reads is behind reality. Run `hydrate` to refresh it.')
 
+    rot = _anchor_rot()
+    if rot:
+        advisory.append((f'anchor pointer rot: {rot[0][:64]}' + (f' (+{len(rot) - 1} more)' if len(rot) > 1 else ''),
+                         'edit the anchor header — it is the first thing every session reads'))
+        print(f'\n[!] ANCHOR POINTER ROT — {len(rot)} issue(s) in the anchor header:')
+        for r_ in rot[:3]:
+            print(f'    {r_}')
+
     contra = _contradictions()
     if contra:
         blocking.append((f'{len(contra)} live contradiction(s) — an unmarked ADR is superseded', f'docs.py supersede {contra[0][2]} --title "..."'))
@@ -611,15 +637,24 @@ def cmd_supersede(a):
     old = next((p for p in _decisions() if re.match(rf'0*{a.number}\b', os.path.basename(p))), None)
     if not old:
         sys.exit(f'no ADR {a.number} found')
-    t = _read(old)
-    if not re.search(r'supersed', t, re.I):
-        open(old, 'w').write('> **SUPERSEDED — see the newer ADR.**\n\n' + t)
     n = _next_adr()
     body = a.content or (a.from_file and _read(a.from_file)) or f'## Context\nSupersedes ADR {int(a.number):04d}.\n\n## Decision\n\n## Rejected\n'
-    fn = os.path.join(DEC, f'{n:04d}-{_slug(a.title)}.md')
-    open(fn, 'w').write(f'# {n:04d} — {a.title}\n\n> Supersedes ADR {int(a.number):04d}.\n\n{body}\n')
-    _append_jsonl(PENDING, {'kind': 'decision', 'n': n, 'title': a.title, 'ts': time.time()})
-    print(f'supersede: marked ADR {int(a.number):04d}, wrote superseding {os.path.relpath(fn, ROOT)}')
+    fn = f'{n:04d}-{_slug(a.title)}.md'
+    st = _stance()
+    draft = getattr(a, 'draft', False) or bool(st and st.get('memory') == 'confirm')
+    # the superseding ADR goes through the same stage→approve path as every other memory write;
+    # when drafted, the OLD ADR's marking is deferred to hydrate (mark_on_land) so nothing durable moves early
+    _emit_record('decision', fn, f'# {n:04d} — {a.title}\n\n> Supersedes ADR {int(a.number):04d}.\n\n{body}\n',
+                 DEC, draft, a.title, {'n': n, 'supersedes': int(a.number), 'mark_on_land': old})
+    t = _read(old)
+    already = bool(re.search(r'supersed', t, re.I))
+    if draft:
+        print(f'supersede: STAGED — ADR {int(a.number):04d} will be marked superseded when the draft lands (hydrate).')
+    elif already:
+        print(f'supersede: ADR {int(a.number):04d} was ALREADY marked — skipped re-marking; wrote superseding {fn}.')
+    else:
+        open(old, 'w').write('> **SUPERSEDED — see the newer ADR.**\n\n' + t)
+        print(f'supersede: marked ADR {int(a.number):04d}, wrote superseding {os.path.relpath(os.path.join(DEC, fn), ROOT)}')
 
 
 # ---------------- hydrate (OUTBOUND — lands approved drafts, drains queue) ----------------
@@ -634,9 +669,15 @@ def cmd_hydrate(a):
     live = [x for x in pend if not x.get('drained')]
     landed = 0
     for x in live:
-        st, tgt = x.get('staged'), x.get('target')
-        if st and tgt and os.path.exists(st):
-            _ensure(os.path.dirname(tgt)); os.rename(st, tgt); landed += 1
+        st_, tgt = x.get('staged'), x.get('target')
+        if st_ and tgt and os.path.exists(st_):
+            _ensure(os.path.dirname(tgt)); os.rename(st_, tgt); landed += 1
+            mo = x.get('mark_on_land')  # a drafted supersede marks its old ADR only now, at landing
+            if mo and os.path.exists(mo):
+                t = _read(mo)
+                if not re.search(r'supersed', t, re.I):
+                    open(mo, 'w').write('> **SUPERSEDED — see the newer ADR.**\n\n' + t)
+                    print(f'   marked {os.path.relpath(mo, ROOT)} superseded (deferred from draft).')
     print(f'hydrate: {len(live)} pending item(s), {landed} approved draft(s) landed into docs/.')
     for x in live:
         print(f'   {x.get("kind")}: {x.get("title", "")[:80]}')
@@ -789,6 +830,10 @@ def cmd_profile(a):
     if a.name:
         if a.name not in PROFILES:
             sys.exit(f'profile must be one of {PROFILES}')
+        prev = _read(PROFILE).strip()
+        if prev and prev != a.name:  # keel tracks ONE profile — never silently swap the project's lens
+            print(f'[!] replacing profile "{prev}" → "{a.name}" (keel tracks one profile per project; '
+                  'hybrid repos: pick the one matching THIS session\'s work)')
         _ensure(STATE); open(PROFILE, 'w').write(a.name); print(f'profile set: {a.name} — load profiles/{a.name}.md')
     else:
         print(_read(PROFILE).strip() or f'(unset) choose: {", ".join(PROFILES)}')
@@ -1261,7 +1306,8 @@ def main():
         if name == 'journal':
             p.add_argument('--friction')
     p = sub.add_parser('supersede'); p.add_argument('number', type=int); p.add_argument('--title', required=True)
-    p.add_argument('--content'); p.add_argument('--from', dest='from_file'); p.set_defaults(fn=cmd_supersede)
+    p.add_argument('--content'); p.add_argument('--from', dest='from_file'); p.add_argument('--draft', action='store_true')
+    p.set_defaults(fn=cmd_supersede)
     p = sub.add_parser('contract'); p.add_argument('action', choices=['set', 'approve', 'check'])
     p.add_argument('--content'); p.add_argument('--from', dest='from_file'); p.add_argument('--approved', action='store_true')
     p.add_argument('--window', type=int); p.set_defaults(fn=cmd_contract)

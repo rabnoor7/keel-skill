@@ -43,9 +43,10 @@ acting — do not follow a decision that a later tier superseded.
 
 ## 1 · Detect the profile
 `docs.py profile` — confirm/set the project profile: **web-app | data-pipeline | automation |
-cli-tool | ml**. Load only that profile's playbook from `profiles/`. Profiles compose (a project may
-carry several); each doc slot is namespaced by its owning profile, so "which rules apply here" is
-answered by the file structure, not your memory. The web-app profile carries full depth in
+cli-tool | ml**. Load only that profile's playbook from `profiles/`. **One profile per project** — on a
+hybrid repo (e.g. app + pipeline), set the profile that matches THIS session's work; switching warns
+loudly and is fine when the work shifts. You may still *read* another profile's playbook for a one-off
+task without switching. The web-app profile carries full depth in
 `profiles/web-app.d/` (backend/frontend/database/docker); task-type playbooks (scaffold · add-feature ·
 debug · upgrade-migrate · refactor) live in `modes/` — read the matching one for the task.
 
