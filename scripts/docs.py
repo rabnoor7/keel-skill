@@ -737,6 +737,12 @@ def cmd_hydrate(a):
                 if not re.search(r'supersed', t, re.I):
                     open(mo, 'w').write('> **SUPERSEDED — see the newer ADR.**\n\n' + t)
                     print(f'   marked {os.path.relpath(mo, ROOT)} superseded (deferred from draft).')
+            if x.get('kind') == 'decision' and x.get('n') is not None:
+                df = _dec_file()  # drafted decisions append their file-log pointer at LANDING, not staging
+                if df:
+                    with open(df, 'a', encoding='utf-8') as f:
+                        f.write(f'\n> ADR {x["n"]:04d} — {x.get("title", "")} (recorded at {os.path.relpath(tgt, ROOT)})\n')
+                    print(f'   pointer appended to {os.path.relpath(df, ROOT)} (your log stays complete)')
     print(f'hydrate: {len(live)} pending item(s), {landed} approved draft(s) landed into docs/.')
     for x in live:
         print(f'   {x.get("kind")}: {x.get("title", "")[:80]}')
