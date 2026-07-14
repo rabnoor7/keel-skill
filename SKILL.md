@@ -50,7 +50,10 @@ answered by the file structure, not your memory. The web-app profile carries ful
 debug · upgrade-migrate · refactor) live in `modes/` — read the matching one for the task.
 
 ## 1b · Orient — light, collaborative, every time (never frantic)
-After rehydrate, don't just wait. Ask **2–3 plain questions** to establish, WITH the user and with zero
+After rehydrate, don't just wait. **First: `docs.py match "<the incoming ask>"`** — if the closest recorded
+decision already settles it, SAY SO before planning anything ("this looks settled in ADR 0015 — re-run the
+tail, or is this new work?"); rebuilding what memory already decided is the exact failure keel exists to
+prevent. Then ask **2–3 plain questions** to establish, WITH the user and with zero
 assumptions: (1) the **goal/outcome** for this session, (2) which **workstream/compartment** it belongs to,
 (3) the **gate / definition of done**, (4) **continue an existing thread vs start new**. Then get out of the
 way — re-orient only if the goal shifts. Don't manufacture structure or docs the user didn't ask for.

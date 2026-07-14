@@ -217,6 +217,50 @@ def cmd_init(a):
 def _decisions(): return sorted(glob.glob(os.path.join(DEC, '*.md')))
 
 
+DEC_FILE_CANDS = [os.path.join(DOCS, 'DECISIONS.md'), os.path.join(ROOT, 'DECISIONS.md'), os.path.join(DOCS, 'decisions.md')]
+
+
+def _dec_file():
+    """A single-file decision log (docs/DECISIONS.md with '## Decision N' sections) — a very common
+    convention keel used to read as '0 ADR'. Honored via explicit override, or autodetected when no
+    folder ADRs exist. Read + checks only; new decisions stay one-per-file with a pointer appended."""
+    ov = _layout_override('decisions')
+    if ov and os.path.isfile(ov):
+        return ov
+    if not glob.glob(os.path.join(DEC, '*.md')):
+        return next((c for c in DEC_FILE_CANDS if os.path.isfile(c)), None)
+    return None
+
+
+def _dec_entries():
+    """Unified decisions view: folder ADRs + single-file-log sections → [{'num','title','text','src'}]."""
+    out = []
+    for p in _decisions():
+        t = _read(p)
+        m = re.match(r'0*(\d+)', os.path.basename(p))
+        h = re.search(r'^#\s+(.+)$', t, re.M)
+        out.append({'num': int(m.group(1)) if m else 0,
+                    'title': (h.group(1).strip() if h else os.path.basename(p)), 'text': t, 'src': p})
+    df = _dec_file()
+    if df:
+        raw = _read(df)
+        heads = list(re.finditer(r'^#{1,3}\s*(?:Decision\s*)?#?0*(\d+)\s*[—:.\-]?\s*(.*)$', raw, re.M))
+        for i, m in enumerate(heads):
+            end = heads[i + 1].start() if i + 1 < len(heads) else len(raw)
+            out.append({'num': int(m.group(1)),
+                        'title': f'{int(m.group(1)):04d} — {m.group(2).strip() or "(untitled)"}',
+                        'text': raw[m.start():end], 'src': df})
+    return out
+
+
+def _dec_tag(text):
+    if re.search(r'PARTIALLY\s+SUPERSED', text, re.I):
+        return '  [PARTIALLY SUPERSEDED]'
+    if re.search(r'^>\s*\*\*SUPERSED|Status:\s*supersed', text, re.I | re.M):
+        return '  [SUPERSEDED]'
+    return ''
+
+
 def _doc_inventory():
     """Every *.md under the doc root(s) + resolved slot dirs, tagged by slot. This is what closes the
     'rehydrate only reads canonical names' gap — extra/differently-named docs are surfaced, never skipped."""
@@ -258,13 +302,13 @@ def _contradictions():
     tiers = [('memory', p) for p in _memory_files()] + [('journal', p) for p in glob.glob(os.path.join(JRN, '*.md'))]
     if os.path.exists(GLOBAL):
         tiers.append(('prefs', GLOBAL))
-    dec_text = {os.path.basename(p): _read(p) for p in _decisions()}
+    entries = _dec_entries()  # folder ADRs + single-file-log sections both participate
     for tier, p in tiers:
         for line in _read(p).splitlines():
             m = CONTRA_A.search(line) or CONTRA_B.search(line)
             if m:
                 n = int(m.group(1))
-                target = next((t for f, t in dec_text.items() if re.match(rf'0*{n}\b', f)), None)
+                target = next((e['text'] for e in entries if e['num'] == n), None)
                 if target is not None and not re.search(r'supersed', target, re.I):
                     rel = os.path.relpath(p, ROOT) if p.startswith(ROOT) else p
                     hits.append((tier, rel, n, line.strip()[:110]))
@@ -393,11 +437,13 @@ def cmd_rehydrate(a):
     if other:
         print(f'   [other] {" · ".join(other)}   ← surfaced, read on demand')
 
-    decs = _decisions()
-    print(f'\n--- DECISIONS: {len(decs)} ADR(s) ---')
-    for d in decs[-12:]:
-        title = next((l for l in _read(d).splitlines() if l.strip()), os.path.basename(d))
-        print('   ' + title.strip('# ').strip()[:88])
+    entries = sorted(_dec_entries(), key=lambda e: e['num'])
+    logsrc = _dec_file()
+    print(f'\n--- DECISIONS: {len(entries)} ADR(s)' + (f' (incl. {os.path.relpath(logsrc, ROOT)})' if logsrc else '') + ' ---')
+    if len(entries) > 12:
+        print(f'   (+{len(entries) - 12} older not shown — docs.py read / search)')
+    for e in entries[-12:]:
+        print('   ' + e['title'][:84] + _dec_tag(e['text']))
 
     stale = _anchor_staleness()
     if stale:
@@ -503,6 +549,10 @@ def _next_adr():
         m = re.match(r'0*(\d+)', b)
         if m:
             n = max(n, int(m.group(1)))
+    df = _dec_file()
+    if df:  # numbers in a single-file decision log count toward the sequence too
+        for m in re.finditer(r'^#{1,3}\s*(?:Decision\s*)?#?0*(\d+)\b', _read(df), re.M):
+            n = max(n, int(m.group(1)))
     return n + 1
 
 
@@ -542,8 +592,13 @@ def _emit_record(kind, fn_name, content, target_dir, draft, title, extra=None):
 def cmd_decision(a):
     n = _next_adr()
     body = a.content or (a.from_file and _read(a.from_file)) or '## Context\n\n## Decision\n\n## Rejected\n'
-    _emit_record('decision', f'{n:04d}-{_slug(a.title)}.md', f'# {n:04d} — {a.title}\n\n{body}\n',
-                 DEC, a.draft, a.title, {'n': n})
+    fn = f'{n:04d}-{_slug(a.title)}.md'
+    _emit_record('decision', fn, f'# {n:04d} — {a.title}\n\n{body}\n', DEC, a.draft, a.title, {'n': n})
+    df = _dec_file()
+    if df and not a.draft:  # repo keeps a single-file log: append a pointer so its history stays complete
+        with open(df, 'a', encoding='utf-8') as f:
+            f.write(f'\n> ADR {n:04d} — {a.title} (recorded at {os.path.relpath(os.path.join(DEC, fn), ROOT)})\n')
+        print(f'decision: pointer appended to {os.path.relpath(df, ROOT)} (keel writes one-per-file; your log stays complete)')
 
 
 def cmd_journal(a):
@@ -1141,6 +1196,26 @@ def _save_asks(rows):
         + (f' — evidence: {r["evidence"]}' if r.get('evidence') else '') for r in rows) + '\n')
 
 
+def cmd_match(a):
+    """'Is this already decided?' — deterministic recall across ALL recorded decisions (folder + file-log),
+    run at orient on the incoming ask so keel says 'settled in ADR 0015' BEFORE planning a rebuild."""
+    stop = {'the', 'and', 'for', 'with', 'that', 'this', 'from', 'into', 'are', 'was', 'were', 'have', 'has'}
+    q = set(re.findall(r'[a-z0-9]{3,}', a.query.lower())) - stop
+    scored = []
+    for e in _dec_entries():
+        words = set(re.findall(r'[a-z0-9]{3,}', (e['title'] + ' ' + e['text'][:600]).lower())) - stop
+        ov = len(q & words)
+        if ov >= 2:
+            scored.append((ov, e))
+    if not scored:
+        print(f'match: nothing recorded resembles "{a.query[:70]}" — likely new ground.'); return
+    scored.sort(key=lambda x: -x[0])
+    print(f'match: closest recorded decision(s) to "{a.query[:70]}":')
+    for ov, e in scored[:3]:
+        print(f'   {e["title"][:80]}{_dec_tag(e["text"])}   (overlap {ov})')
+    print('→ if the top hit already settles this ask, SAY SO before planning — re-run vs new work is the user\'s call.')
+
+
 def cmd_ask(a):
     rows = _load_asks()
     if a.action == 'add':
@@ -1213,6 +1288,7 @@ def main():
     p = sub.add_parser('ask'); p.add_argument('action', choices=['add', 'list', 'close', 'bump'])
     p.add_argument('id', nargs='?', type=int); p.add_argument('--text'); p.add_argument('--evidence')
     p.add_argument('--all', action='store_true'); p.set_defaults(fn=cmd_ask)
+    p = sub.add_parser('match'); p.add_argument('query'); p.set_defaults(fn=cmd_match)
     p = sub.add_parser('claim'); p.add_argument('resource'); p.add_argument('--by'); p.add_argument('--release', action='store_true'); p.set_defaults(fn=cmd_claim)
     p = sub.add_parser('whiteboard'); p.add_argument('action', choices=['post', 'read']); p.add_argument('message', nargs='?', default=''); p.add_argument('--by'); p.set_defaults(fn=cmd_whiteboard)
     p = sub.add_parser('search'); p.add_argument('term'); p.set_defaults(fn=cmd_search)
