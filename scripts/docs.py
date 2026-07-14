@@ -759,11 +759,33 @@ def cmd_verify(a):
         if not os.path.exists(ap):
             open(ap, 'w').write(AUDIT_TMPL)
         print(f'verify init: {os.path.relpath(ap, ROOT)} — fill in field-level + provenance + regression checks.')
+    elif a.action == 'baseline':
+        if getattr(a, 'check', False):
+            shr = _baseline_shrink()
+            if shr:
+                print(f'[!!] BASELINE SHRINK — {len(shr)} deliverable(s) smaller than the last good run:')
+                for rel, kind, was, now in shr[:8]:
+                    print(f'    {rel}: {kind} — was {was}B, now {now}B')
+                print('    → a smaller output than last time usually means silent under-capture. (exit 1)')
+                sys.exit(1)
+            print('verify baseline: ✅ no deliverable shrank vs the last good run.')
+            return
+        snap = {}
+        for d in _deliverable_dirs():
+            for p in glob.glob(os.path.join(ROOT, d, '**', '*'), recursive=True):
+                if os.path.isfile(p) and not os.path.basename(p).startswith('.'):
+                    snap[os.path.relpath(p, ROOT)] = {'size': os.path.getsize(p)}
+        json.dump({'ts': time.time(), 'files': snap}, open(os.path.join(VERIFY_DIR, 'baseline.json'), 'w'))
+        print(f'verify baseline: recorded {len(snap)} deliverable file(s) as the last-good oracle.')
     elif a.action == 'run':
         if not os.path.exists(ap):
             sys.exit('no audit — run: verify init')
         import subprocess
         r = subprocess.run([sys.executable, ap])
+        shr = _baseline_shrink()
+        if shr:
+            print(f'[!!] BASELINE SHRINK — {len(shr)} deliverable(s) smaller than the last good run '
+                  f'({shr[0][0]}: {shr[0][2]}B → {shr[0][3]}B) — silent under-capture?')
         json.dump({'result': 'pass' if r.returncode == 0 else 'fail', 'ts': time.time(),
                    'deliverables': _deliverable_hash()}, open(VERIFY_STAMP, 'w'))
         print(f'verify run: exit {r.returncode} (stamped)'); sys.exit(r.returncode)
@@ -1241,6 +1263,124 @@ def _save_asks(rows):
         + (f' — evidence: {r["evidence"]}' if r.get('evidence') else '') for r in rows) + '\n')
 
 
+# ---------------- THIN SLICES round 2: verify-baseline · preserve · orphans · smoke ----------------
+
+PRESERVE_DIR = os.path.join(STATE, 'preserve')
+SMOKE = os.path.join(STATE, 'smoke.json')
+
+
+def _baseline_shrink():
+    """Compare deliverables to the last recorded good run — a scrape/export SMALLER than last time is a
+    silent-under-capture signal no field-level audit sees ('if it's smaller than last time, something's wrong')."""
+    bp = os.path.join(VERIFY_DIR, 'baseline.json')
+    if not os.path.exists(bp):
+        return []
+    base = json.load(open(bp)).get('files', {})
+    out = []
+    for rel, b in base.items():
+        p = os.path.join(ROOT, rel)
+        if not os.path.exists(p):
+            out.append((rel, 'MISSING', b['size'], 0))
+        elif b['size'] and os.path.getsize(p) < 0.9 * b['size']:
+            out.append((rel, 'SHRUNK', b['size'], os.path.getsize(p)))
+    return out
+
+
+def _units(text):
+    """Preservation units — the non-trivial content a regeneration tends to silently drop:
+    headings, list items, and links/citations."""
+    us = set()
+    for line in text.splitlines():
+        s = line.strip()
+        if re.match(r'#{1,6}\s+\S', s):
+            us.add('H: ' + s.lstrip('#').strip()[:80])
+        elif re.match(r'[-*]\s+\S', s):
+            us.add('L: ' + s.lstrip('-* ').strip()[:80])
+    for m in re.finditer(r'https?://[^\s)\]">]+', text):
+        us.add('U: ' + m.group(0)[:80])
+    return us
+
+
+def cmd_preserve(a):
+    _ensure(PRESERVE_DIR)
+    sp = os.path.join(PRESERVE_DIR, _slug(a.file) + '.json')
+    if a.action == 'snapshot':
+        us = _units(_read(a.file))
+        json.dump({'file': a.file, 'ts': time.time(), 'units': sorted(us)}, open(sp, 'w'))
+        print(f'preserve: snapshot {a.file} — {len(us)} unit(s) (headings / list items / links).')
+    elif a.action == 'check':
+        if not os.path.exists(sp):
+            sys.exit(f'no snapshot for {a.file} — run `preserve snapshot {a.file}` before editing')
+        old = set(json.load(open(sp))['units'])
+        new = _units(_read(a.file))
+        lost = sorted(old - new)
+        if lost:
+            print(f'[!!] PRESERVE FAIL — {len(lost)}/{len(old)} snapshot unit(s) GONE from {a.file} '
+                  '(regenerated instead of edited?):')
+            for u in lost[:8]:
+                print(f'    - {u}')
+            print(f'    ({len(new - old)} new unit(s) added.) Restore the losses or justify each. (exit 1)')
+            sys.exit(1)
+        print(f'preserve: OK — all {len(old)} snapshot unit(s) still present ({len(new - old)} added).')
+
+
+def cmd_orphans(a):
+    """Graph integrity across the memory tiers: ADR references to decisions that don't exist,
+    dead relative markdown links, and [[wiki-links]] with no matching doc."""
+    entries = _dec_entries()
+    nums = {e['num'] for e in entries}
+    stems = {os.path.splitext(os.path.basename(p))[0].lower()
+             for p in glob.glob(os.path.join(DOCS, '**', '*.md'), recursive=True) + _memory_files()}
+    dangling = []
+    scan = glob.glob(os.path.join(DOCS, '**', '*.md'), recursive=True) + _memory_files()
+    for p in scan:
+        rel = os.path.relpath(p, ROOT) if p.startswith(ROOT) else p
+        text = _read(p)
+        for m in re.finditer(r'\bADR[- ]?0*(\d{1,4})\b', text):
+            if int(m.group(1)) not in nums:
+                dangling.append((rel, f'ADR {m.group(1)} — no such decision recorded'))
+        for m in re.finditer(r'\]\((?!https?://|#|mailto:)([^)#\s]+\.md)\)', text):
+            tgt = os.path.normpath(os.path.join(os.path.dirname(p), m.group(1)))
+            if not os.path.exists(tgt):
+                dangling.append((rel, f'link → {m.group(1)} (file missing)'))
+        for m in re.finditer(r'\[\[([^\]|#]+)', text):
+            if m.group(1).strip().lower() not in stems:
+                dangling.append((rel, f'[[{m.group(1).strip()}]] — no doc with that name yet'))
+    if not dangling:
+        print(f'orphans: none — every reference across {len(scan)} doc(s) resolves.'); return
+    print(f'orphans: {len(dangling)} dangling reference(s) across the memory graph:')
+    for rel, msg in dangling[:12]:
+        print(f'   {rel}: {msg}')
+    if len(dangling) > 12:
+        print(f'   (+{len(dangling) - 12} more)')
+
+
+def cmd_smoke(a):
+    if a.action == 'set':
+        if not a.cmd:
+            sys.exit('smoke set --cmd "<tiny end-to-end sample command>"')
+        _ensure(STATE); _ensure_keel_ignored()
+        json.dump({'cmd': a.cmd}, open(SMOKE, 'w'))
+        print(f'smoke: gate command set: {a.cmd}')
+    elif a.action == 'run':
+        if not os.path.exists(SMOKE):
+            sys.exit('no smoke command — `smoke set --cmd "..."` first')
+        cfg = json.load(open(SMOKE))
+        rc = os.system(cfg['cmd'])
+        cfg.update({'last_rc': rc, 'last_ts': time.time()})
+        json.dump(cfg, open(SMOKE, 'w'))
+        print(f'smoke: {"PASS ✅" if rc == 0 else f"FAIL (rc {rc})"} — gate {"open" if rc == 0 else "closed"}.')
+        sys.exit(1 if rc else 0)
+    elif a.action == 'gate':
+        cfg = json.load(open(SMOKE)) if os.path.exists(SMOKE) else None
+        fresh = cfg and cfg.get('last_rc') == 0 and (time.time() - cfg.get('last_ts', 0)) < 3600
+        if fresh:
+            print('smoke gate: ✅ fresh passing sample run — go for the expensive run.'); return
+        print('smoke gate: ✗ no fresh PASSING smoke run — validate the pipeline on a tiny sample first '
+              '(`docs.py smoke run`). (exit 1)')
+        sys.exit(1)
+
+
 def cmd_match(a):
     """'Is this already decided?' — deterministic recall across ALL recorded decisions (folder + file-log),
     run at orient on the incoming ask so keel says 'settled in ADR 0015' BEFORE planning a rebuild."""
@@ -1311,7 +1451,11 @@ def main():
     p = sub.add_parser('contract'); p.add_argument('action', choices=['set', 'approve', 'check'])
     p.add_argument('--content'); p.add_argument('--from', dest='from_file'); p.add_argument('--approved', action='store_true')
     p.add_argument('--window', type=int); p.set_defaults(fn=cmd_contract)
-    p = sub.add_parser('verify'); p.add_argument('action', choices=['init', 'run', 'done', 'sync']); p.set_defaults(fn=cmd_verify)
+    p = sub.add_parser('verify'); p.add_argument('action', choices=['init', 'run', 'done', 'sync', 'baseline'])
+    p.add_argument('--check', action='store_true'); p.set_defaults(fn=cmd_verify)
+    p = sub.add_parser('preserve'); p.add_argument('action', choices=['snapshot', 'check']); p.add_argument('file'); p.set_defaults(fn=cmd_preserve)
+    sub.add_parser('orphans').set_defaults(fn=cmd_orphans)
+    p = sub.add_parser('smoke'); p.add_argument('action', choices=['set', 'run', 'gate']); p.add_argument('--cmd'); p.set_defaults(fn=cmd_smoke)
     sub.add_parser('hygiene').set_defaults(fn=cmd_hygiene)
     p = sub.add_parser('clarify-depth'); p.add_argument('level', nargs='?', choices=['thorough', 'light']); p.set_defaults(fn=cmd_clarify)
     p = sub.add_parser('feedback'); p.add_argument('--note'); p.add_argument('--severity', choices=['low', 'med', 'high']); p.add_argument('--ref'); p.set_defaults(fn=cmd_feedback)
