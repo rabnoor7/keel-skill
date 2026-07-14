@@ -90,6 +90,30 @@ def _hash(s): return hashlib.sha256(s.encode('utf-8', 'ignore')).hexdigest()[:12
 def _slug(t): return re.sub(r'[^a-z0-9]+', '-', t.lower()).strip('-')[:60] or 'entry'
 
 
+class _FileLock:
+    """Guard for read-modify-write files (asks/escalations): lock like the whiteboard (Unix; best-effort
+    on Windows). Combined with atomic replace so a crash can't leave a torn file."""
+    def __init__(self, path):
+        self.p = path + '.lock'
+    def __enter__(self):
+        _ensure(os.path.dirname(self.p))
+        self.f = open(self.p, 'a')
+        if fcntl:
+            fcntl.flock(self.f, fcntl.LOCK_EX)
+        return self
+    def __exit__(self, *a):
+        if fcntl:
+            fcntl.flock(self.f, fcntl.LOCK_UN)
+        self.f.close()
+
+
+def _atomic_write(path, content):
+    tmp = path + '.tmp' + str(os.getpid())
+    with open(tmp, 'w', encoding='utf-8') as f:
+        f.write(content)
+    os.replace(tmp, path)
+
+
 def _append_jsonl(p, obj):
     _ensure(os.path.dirname(p))
     if p.startswith(STATE):
@@ -219,6 +243,13 @@ def cmd_init(a):
 def _decisions(): return sorted(glob.glob(os.path.join(DEC, '*.md')))
 
 
+def _journals_sorted():
+    """Date-prefix primary (stable across clones), mtime as same-day tiebreak — several entries on one
+    day otherwise sort alphabetically and the 'newest journal' line lies."""
+    return sorted(glob.glob(os.path.join(JRN, '*.md')),
+                  key=lambda p: (os.path.basename(p)[:10], _mtime(p), os.path.basename(p)))
+
+
 DEC_FILE_CANDS = [os.path.join(DOCS, 'DECISIONS.md'), os.path.join(ROOT, 'DECISIONS.md'), os.path.join(DOCS, 'decisions.md')]
 
 
@@ -284,6 +315,7 @@ def _doc_inventory():
         elif ap == dm: t = 'data-model'
         elif ap in decset: t = 'decision'
         elif ap in jrnset: t = 'journal'
+        elif ap == os.path.abspath(ASKS_MD): t = 'asks'
         else: t = 'other'
         tagged.append((t, os.path.relpath(ap, ROOT) if ap.startswith(ROOT) else ap))
     return tagged
@@ -451,7 +483,7 @@ def cmd_rehydrate(a):
     njrn = sum(1 for t, _ in inv if t == 'journal')
     print(f'\n--- DOCS INVENTORY: {len(inv)} doc(s) — nothing silently skipped ---')
     for t, rel in inv:
-        if t in ('anchor', 'data-model'):
+        if t in ('anchor', 'data-model', 'asks'):
             print(f'   [{t}] {rel}')
     print(f'   [decisions] {ndec} · [journal] {njrn}')
     if other:
@@ -569,7 +601,7 @@ def cmd_rehydrate(a):
         for r in sorted(open_asks, key=lambda r: -r['raised'])[:5]:
             print(f'    #{r["id"]} raised {r["raised"]}x: {r["text"][:84]}')
 
-    js = sorted(glob.glob(os.path.join(JRN, '*.md')))
+    js = _journals_sorted()
     print(f'\n--- newest journal --- ' + (os.path.basename(js[-1]) if js else '(none)'))
     if blocking or advisory:
         print('\n--- CORRECTIVE ACTIONS (' + f'{len(blocking)} blocking · {len(advisory)} advisory) ---')
@@ -822,6 +854,22 @@ def cmd_verify(a):
 
 def cmd_hygiene(a):
     probs = _hygiene_problems()
+    # .keel growth report — keel reports, the USER deletes (never auto-pruned, per the parked-runs ruling)
+    if os.path.isdir(STATE):
+        sz = sum(os.path.getsize(os.path.join(d, f)) for d, _, fs in os.walk(STATE) for f in fs)
+        closed = [os.path.basename(p)[:-6] for p in glob.glob(os.path.join(RUNS, '*.jsonl'))
+                  if (_run_state(os.path.basename(p)[:-6]) or {}).get('closed')]
+        drained = []
+        for p in glob.glob(os.path.join(INBOX, '*.jsonl')):
+            stream = os.path.basename(p)[:-6]
+            rec = set(_read(os.path.join(INBOX, stream + '.reconciled')).split())
+            if rec and all(r.get('hash') in rec for r in _load_jsonl(p)):
+                drained.append(stream)
+        print(f'.keel state: {sz / 1e6:.1f} MB')
+        if closed:
+            print(f'  {len(closed)} closed run ledger(s) reclaimable — rm .keel/runs/<id>.jsonl for: {", ".join(closed[:6])}')
+        if drained:
+            print(f'  {len(drained)} fully-reconciled capture stream(s) reclaimable — rm .keel/inbox/<stream>.* for: {", ".join(drained[:6])}')
     if probs:
         print('hygiene: ✗'); [print('  ' + p) for p in probs]; sys.exit(1)
     print(f'hygiene: ✅ deliverable dir(s) {_deliverable_dirs()} clean.')
@@ -899,7 +947,7 @@ def cmd_read(a):
             print(f'\n===== {os.path.relpath(p, ROOT)} =====\n' + _read(p))
     for p in _decisions():
         print(f'\n===== {os.path.relpath(p, ROOT)} =====\n' + _read(p))
-    js = sorted(glob.glob(os.path.join(JRN, '*.md')))[-(a.journal_limit or 5):]
+    js = _journals_sorted()[-(a.journal_limit or 5):]
     for p in js:
         print(f'\n===== {os.path.relpath(p, ROOT)} =====\n' + _read(p))
     if len(glob.glob(os.path.join(JRN, '*.md'))) > len(js):
@@ -1221,15 +1269,14 @@ def cmd_escalate(a):
             if r.get('status') == 'open':
                 print(f'  #{r["id"]} [{r.get("because")}] {r.get("question", "")[:90]}')
     elif a.action in ('resolve', 'retract'):
-        rows = _load_jsonl(ESCALATIONS)
-        tgt = next((r for r in rows if r.get('id') == a.id and r.get('status') == 'open'), None)
-        if not tgt:
-            sys.exit(f'no open escalation #{a.id}')
-        tgt['status'] = 'retracted' if a.action == 'retract' else 'resolved'
-        tgt['choice'] = a.choice
-        with open(ESCALATIONS, 'w') as f:
-            for r in rows:
-                f.write(json.dumps(r) + '\n')
+        with _FileLock(ESCALATIONS):
+            rows = _load_jsonl(ESCALATIONS)
+            tgt = next((r for r in rows if r.get('id') == a.id and r.get('status') == 'open'), None)
+            if not tgt:
+                sys.exit(f'no open escalation #{a.id}')
+            tgt['status'] = 'retracted' if a.action == 'retract' else 'resolved'
+            tgt['choice'] = a.choice
+            _atomic_write(ESCALATIONS, ''.join(json.dumps(r) + '\n' for r in rows))
         if a.action == 'resolve' and a.to_decision:
             n = _next_adr()
             body = f'## Context\nEscalation #{a.id}: {tgt.get("question")}\n\n## Decision\n{a.choice}\n\n## Rejected\n{tgt.get("options") or "(other options)"}\n'
@@ -1256,9 +1303,9 @@ def _save_asks(rows):
     hdr = ('# Asks — standing user asks\n\n'
            'One line per ask; hand-editable. An ask stays open until closed WITH evidence\n'
            '(`docs.py ask close <id> --evidence <path>`); repeats are tracked (`ask bump <id>`).\n\n')
-    open(ASKS_MD, 'w').write(hdr + '\n'.join(
+    _atomic_write(ASKS_MD, hdr + '\n'.join(
         f'- [{r["status"]}] #{r["id"]} (raised {r["raised"]}x) {r["text"]}'
-        + (f' — evidence: {r["evidence"]}' if r.get('evidence') else '') for r in rows) + '\n')
+        + (f' — evidence: {r["evidence"]}' if r.get('evidence') else '') for r in rows) + '\n')  # atomic
 
 
 # ---------------- THIN SLICES round 4 (tranche B): batch · coverage · livetest · substrate · handoff · provenance ----------------
@@ -1283,7 +1330,7 @@ def _cov_units(text):
              if re.match(r'\s*(?:[-*]|\d+[.)])\s+\S', l)]
     if not units:
         units = [l.strip() for l in text.splitlines() if len(l.split()) >= 6]
-    return [u for u in units if len(u.split()) >= 3]
+    return [u for u in units if len(u.split()) >= 3 and not re.fullmatch(r'\[[^\]]*\]', u)]
 
 
 _STOP = {'the', 'and', 'for', 'with', 'that', 'this', 'from', 'into', 'are', 'was', 'were', 'have', 'has',
@@ -1611,15 +1658,31 @@ def cmd_smoke(a):
         sys.exit(1)
 
 
+def _stem(w):
+    """Naive suffix-fold so plural/verb-form variants still match (profiles→profile, composition→composit);
+    min-4-char stem guards against overstemming short words."""
+    for suf in ('ings', 'ing', 'ions', 'ion', 'es', 'ed', 's'):
+        if w.endswith(suf) and len(w) - len(suf) >= 4:
+            return w[:-len(suf)]
+    return w
+
+
 def cmd_match(a):
     """'Is this already decided?' — deterministic recall across ALL recorded decisions (folder + file-log),
     run at orient on the incoming ask so keel says 'settled in ADR 0015' BEFORE planning a rebuild."""
     stop = {'the', 'and', 'for', 'with', 'that', 'this', 'from', 'into', 'are', 'was', 'were', 'have', 'has'}
-    q = set(re.findall(r'[a-z0-9]{3,}', a.query.lower())) - stop
+
+    def toks(s):
+        return {_stem(w) for w in re.findall(r'[a-z0-9]{3,}', s.lower())} - stop
+
+    def hit(qt, words):  # prefix-aware: 'compos(e)' matches 'composit(ion)' — stems of the same root
+        return any(qt == w or (len(qt) >= 5 and w.startswith(qt)) or (len(w) >= 5 and qt.startswith(w))
+                   for w in words)
+    q = toks(a.query)
     scored = []
     for e in _dec_entries():
-        words = set(re.findall(r'[a-z0-9]{3,}', (e['title'] + ' ' + e['text'][:600]).lower())) - stop
-        ov = len(q & words)
+        tw, bw = toks(e['title']), toks(e['text'][:600])
+        ov = sum(1 for qt in q if hit(qt, bw)) + sum(1 for qt in q if hit(qt, tw))  # title hits count double
         if ov >= 2:
             scored.append((ov, e))
     if not scored:
@@ -1632,6 +1695,13 @@ def cmd_match(a):
 
 
 def cmd_ask(a):
+    if a.action == 'list':
+        for r in _load_asks():
+            if r['status'] == 'open' or a.all:
+                print(f'  #{r["id"]} [{r["status"]}] raised {r["raised"]}x: {r["text"][:90]}')
+        return
+    lock = _FileLock(ASKS_MD)
+    lock.__enter__()
     rows = _load_asks()
     if a.action == 'add':
         aid = max((r['id'] for r in rows), default=0) + 1
@@ -1645,10 +1715,6 @@ def cmd_ask(a):
         tgt['raised'] += 1
         _save_asks(rows)
         print(f'ask #{a.id} raised {tgt["raised"]}x now — recurring asks get loud at 3+.')
-    elif a.action == 'list':
-        for r in rows:
-            if r['status'] == 'open' or a.all:
-                print(f'  #{r["id"]} [{r["status"]}] raised {r["raised"]}x: {r["text"][:90]}')
     elif a.action == 'close':
         if not a.evidence:
             sys.exit('[!] ask close REJECTED — no --evidence. "resolved" without proof is a claim, not a fact. (exit 1)')
@@ -1659,6 +1725,7 @@ def cmd_ask(a):
         _save_asks(rows)
         warn = '' if os.path.exists(os.path.join(ROOT, a.evidence)) else '   [!] evidence path not found on disk'
         print(f'ask #{a.id} closed → evidence: {a.evidence}{warn}')
+    lock.__exit__()
 
 
 def main():
