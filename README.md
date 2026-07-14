@@ -25,10 +25,36 @@ Requirements: Python 3 (standard library only). Nothing to `pip install`.
 ## Use it
 
 Start any session by describing what you want to build or change. On an existing project, say "rehydrate"
-(or just start) and keel loads your `docs/` memory first. See every command with:
+(or just start) and keel loads your `docs/` memory first — it reads YOUR layout (README/CLAUDE/AGENTS
+anchors, `adr/` folders, single-file `DECISIONS.md` logs) without forcing its own. See every command with:
 ```bash
-python3 ~/.claude/skills/keel/scripts/docs.py --help
+python3 ~/.claude/skills/keel/scripts/docs.py --help     # docs.py --version prints the installed version
 ```
+
+## What's new in 1.1
+
+- **Standing state that survives sessions** — `stance` (freeze / confirm-memory), `escalate`
+  (BLOCKED-ON-USER checkpoints that become ADRs on resolution), `ask` (evidence-gated ask ledger in
+  committed `docs/asks.md`).
+- **Long-job durability** — `run` (per-item work ledger; resume exactly where a dead session left off),
+  `sink` (durable capture inbox with dedup import; fetched data can never be silently disposed).
+- **Recall & integrity** — `match` ("is this already decided?" at orient), `orphans` (dangling-reference
+  check), honest decision digests (`[SUPERSEDED]` tags, nothing silently truncated), anchor pointer-rot
+  detection, severity-split rehydrate (blocking vs advisory + a corrective-actions footer; `--full` shows
+  everything).
+- **Quality gates** — `preserve` (edit-not-regenerate proof), `accept` (typed definition-of-done),
+  `coverage` (did the output address every point of a source?), `critique` (assumption/research/alternatives
+  gate on big plans), `smoke` (tiny sample before an expensive run), `livetest` (human live-test lane —
+  self-certification banned), `route` (task-class → model policy, advisory).
+- **Multi-worktree** — `handoff`: an append-only channel all git worktrees of a repo share (same-machine).
+
+## Platform & privacy notes
+
+- **Windows**: supported with one degradation — whiteboard posts skip file locking (`fcntl` is Unix-only);
+  everything else works.
+- **Privacy**: everything keel writes stays on your machine. `.keel/` (private state, auto-gitignored)
+  holds captured `sink` payloads in plaintext — treat scraped/PII data accordingly. `docs.py feedback`
+  writes only to your own `~/.claude/keel/feedback.jsonl`; nothing is ever transmitted anywhere.
 
 ## Share it
 

@@ -71,6 +71,23 @@ def main():
     if nxt != 16:  # highest real ADR in fixtures is 0015
         fails.append(f'_next_adr: got {nxt}, expected 16 (date-named draft must not poison numbering)')
 
+    # the two convo-gate bugs, locked forever:
+    # (a) a DECISIONS.md log is honored even when folder ADRs exist (recognition must not flip off)
+    with open(os.path.join(root, 'docs', 'DECISIONS.md'), 'w') as fh:
+        fh.write('# Decision Log\n\n(prose only — no numbered headings, so counts stay untouched)\n')
+    if not (docs._dec_file() or '').endswith('DECISIONS.md'):
+        fails.append('_dec_file: DECISIONS.md not honored while folder ADRs exist (recognition flipped off)')
+    # (b) a DRAFTED decision appends its log pointer at landing (was silently skipped)
+    import io, contextlib
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        docs._emit_record('decision', '0017-drafted-pointer-test.md', '# 0017 — drafted pointer test\n',
+                          docs.DEC, True, 'drafted pointer test', {'n': 17})
+        docs.cmd_hydrate(object())
+    logtext = open(os.path.join(root, 'docs', 'DECISIONS.md')).read()
+    if '> ADR 0017' not in logtext:
+        fails.append('hydrate: drafted decision landed without appending its DECISIONS.md pointer')
+
     # every registered command family stays registered (guards against parser-wiring regressions)
     import io, contextlib
     buf = io.StringIO()

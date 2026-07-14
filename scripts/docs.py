@@ -417,6 +417,9 @@ WHAT THAT FEELS LIKE
 TO START
   Just tell it what you want to build or change. On an existing project, say
   "rehydrate" (or start describing the work) and it loads context first.
+  Standing state survives sessions: a freeze stays frozen, an unanswered
+  escalation stays blocking, an open ask stays open — until YOU clear them.
+  (docs.py --version prints the installed version.)
 
 The rules that must not drift live in code, not prose:  python3 scripts/docs.py --help
 ======================================================================"""
