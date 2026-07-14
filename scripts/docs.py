@@ -260,9 +260,9 @@ def _dec_file():
     ov = _layout_override('decisions')
     if ov and os.path.isfile(ov):
         return ov
-    if not glob.glob(os.path.join(DEC, '*.md')):
-        return next((c for c in DEC_FILE_CANDS if os.path.isfile(c)), None)
-    return None
+    # honored UNCONDITIONALLY when present: folder ADRs and a log coexist by design (keel writes
+    # one-per-file + appends a pointer), so recognition must not flip off after the first landing
+    return next((c for c in DEC_FILE_CANDS if os.path.isfile(c)), None)
 
 
 def _dec_entries():
