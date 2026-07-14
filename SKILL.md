@@ -94,6 +94,17 @@ approved the plan first.
   snapshot <file>` before touching it; `preserve check <file>` must pass before claiming done on it. A
   regeneration that silently drops content (headings, list items, links/citations) fails with every loss
   listed by name; losses ship only with the user's explicit sign-off.
+- **BIG/pivotal contracts get the critique gate BEFORE the plan is shown.** Build the ledger while
+  planning (`docs.py critique assume/research/alt`) and `critique check` must pass before presenting the
+  contract — an untested load-bearing assumption, a plan grounded in zero research, or zero rejected
+  alternatives are each blockers. Small contracts skip this entirely; ceremony on trivial work is
+  over-gating, itself a failure.
+- **Typed deliverables close against their recorded bar.** If a deliverable's type has an acceptance
+  registry (`docs/acceptance/<type>.md`), run `docs.py accept check <type>` and attest each criterion in
+  the done summary — the user owns additions to the bar; an empty bar for a claimed type is a refusal.
+- **If a routing policy exists** (`docs/routing.md`), run `docs.py route check` when the contract is set —
+  mis-routed items are flagged advisory ("delegate or justify"); keel cannot switch models and never
+  pretends to.
 - **Pivotal / irreversible / costly calls that are genuinely the USER's → `docs.py escalate raise`.** Before
   any irreversible or externally-visible act (sending real messages, destructive ops on protected data,
   launching an expensive run), when the call is the user's to make: raise an escalation with the options and
@@ -138,7 +149,8 @@ sit last. Conforming to what's there beats imposing a default.
 clarify-depth · contradictions · claim · whiteboard · supersede · decision · journal · search · prefs · state ·
 layout · feedback · run (start/mark/status/resume/close) · sink (add/status/import) · stance (freeze/confirm) ·
 escalate (raise/resolve) · ask (add/bump/close --evidence) · match · preserve (snapshot/check) ·
-orphans · smoke (set/run/gate)`
+orphans · smoke (set/run/gate) · accept (add/show/check) · route (set/model/check) ·
+budget (cap/estimate/record/check) · critique (assume/research/alt/check)`
 — run `python3 scripts/docs.py --help` · `docs.py --version` reports the installed version.
 
 ## Standing defaults

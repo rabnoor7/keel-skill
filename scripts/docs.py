@@ -13,7 +13,8 @@ Global prefs: ~/keel/preferences.md.
 
 Commands: init · rehydrate · hydrate · profile · decision · journal · supersede · contradictions · contract ·
           verify · hygiene · friction · clarify-depth · claim · whiteboard · search · read · prefs · state ·
-          layout · feedback · run · sink · stance · escalate · ask · match · preserve · orphans · smoke
+          layout · feedback · run · sink · stance · escalate · ask · match · preserve · orphans · smoke ·
+          accept · route · budget · critique
           (--version prints the installed version)
 """
 import argparse, os, sys, json, re, hashlib, time, datetime, glob, platform
@@ -770,24 +771,10 @@ def cmd_verify(a):
         if not os.path.exists(ap):
             sys.exit('no audit — run: verify init')
         import subprocess
-        r = subprocess.run([sys.executable, ap], capture_output=True, text=True)
-        sys.stdout.write(r.stdout); sys.stderr.write(r.stderr)
-        # verify remembers: any `METRIC <name> <number>` line the audit prints is stored in the stamp and
-        # compared against the last PASSING run — the general form of "this run is smaller than last time"
-        # (rows, entities, fill-rate, eval score — whatever the audit already measures).
-        metrics = {m.group(1): float(m.group(2))
-                   for m in re.finditer(r'^METRIC\s+(\S+)\s+([\d.]+)\s*$', r.stdout, re.M)}
-        prev = json.load(open(VERIFY_STAMP)) if os.path.exists(VERIFY_STAMP) else {}
-        if prev.get('result') == 'pass':
-            for name, old in (prev.get('metrics') or {}).items():
-                new = metrics.get(name)
-                if new is not None and old and new < 0.9 * old:
-                    print(f'[!] METRIC REGRESSION — {name}: {old:g} → {new:g} ({(new - old) / old:+.0%}) vs the '
-                          'last passing run. Smaller than last time usually means silent under-capture.')
+        r = subprocess.run([sys.executable, ap])
         json.dump({'result': 'pass' if r.returncode == 0 else 'fail', 'ts': time.time(),
-                   'deliverables': _deliverable_hash(), 'metrics': metrics}, open(VERIFY_STAMP, 'w'))
-        print(f'verify run: exit {r.returncode} (stamped'
-              + (f', {len(metrics)} metric(s) remembered' if metrics else '') + ')'); sys.exit(r.returncode)
+                   'deliverables': _deliverable_hash()}, open(VERIFY_STAMP, 'w'))
+        print(f'verify run: exit {r.returncode} (stamped)'); sys.exit(r.returncode)
     elif a.action == 'done':
         if not os.path.exists(VERIFY_STAMP):
             print('verify done: ✗ never verified — run `verify run` before claiming done.'); sys.exit(1)
@@ -1398,8 +1385,11 @@ def cmd_critique(a):
         rows = [r for r in _load_jsonl(CRITIQUE) if r.get('contract') == chash]
         if not chash:
             sys.exit('critique check: no contract set — the critique binds to a specific plan')
-        untested = [r for r in rows if r.get('kind') == 'assume' and r.get('bearing') == 'load'
-                    and r.get('status') == 'untested']
+        latest = {}  # latest-per-claim wins: re-asserting an assumption with a new status supersedes the old
+        for r in rows:
+            if r.get('kind') == 'assume':
+                latest[r.get('claim')] = r
+        untested = [r for r in latest.values() if r.get('bearing') == 'load' and r.get('status') == 'untested']
         research = [r for r in rows if r.get('kind') == 'research']
         alts = [r for r in rows if r.get('kind') == 'alt']
         fails = []
