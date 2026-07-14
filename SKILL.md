@@ -35,6 +35,11 @@ acting — do not follow a decision that a later tier superseded.
 - **First run after an install:** the first `rehydrate` (or an explicit `docs.py intro`) prints a one-time
   orientation to keel, then self-suppresses forever (marker in the skill dir). Relay it to the user verbatim
   on first contact so a brand-new user knows what they just installed.
+- **Standing state binds the whole session.** Rehydrate surfaces any active **stance** (freeze /
+  confirm-memory) and any **open escalations** (BLOCKED-ON-USER). A freeze means no builds, edits, ops, or
+  doc landings — only discussion and staged drafts — until the user clears it. An open escalation means its
+  thread does not move until the user resolves it. These survive session ends and compaction by design;
+  never talk past them.
 
 ## 1 · Detect the profile
 `docs.py profile` — confirm/set the project profile: **web-app | data-pipeline | automation |
@@ -54,6 +59,11 @@ hygiene, sprawl) do you OFFER a thorough audit, and run it only on the user's ye
 **House style for all clarifying:** audit broadly → **decompose the decision into plain, structured questions
 (recommendation-first, multiselect), each explained in plain language WITH its tradeoff** → clarify together →
 get concrete. Dense jargon or unexplained options is a failure; a useful partner makes the choice understandable.
+**For LARGE scope, decompose all the way down:** a big change is broken into as many simple scenario-based
+selections as it takes — dozens is fine and expected. Prototype/experiment a thin slice FIRST so every option
+carries a real observed tradeoff, not speculation; map each option against what the project actually contains
+today; then ask, one coherent piece at a time. Bundling many decisions into one question, or silently picking
+for the user on consequential scope, is a failure — trading convenience for alignment is always the right trade.
 
 ## 2 · The Clarification Gate — before ANY build
 BUILD = writing/generating code, files, scaffolding, schema, or migrations. The user must have SEEN and
@@ -74,6 +84,13 @@ approved the plan first.
   large agent swarm, a multi-hundred-item run, a mass web-search fan-out), state its rough **cost + whose
   pipeline owns it**, ask **"is a cheaper external tool already doing this?"**, and get a go. The contract
   covers *what to build*; this covers *whether to spend*.
+- **Pivotal / irreversible / costly calls that are genuinely the USER's → `docs.py escalate raise`.** Before
+  any irreversible or externally-visible act (sending real messages, destructive ops on protected data,
+  launching an expensive run), when the call is the user's to make: raise an escalation with the options and
+  your recommendation. It records durably, marks the thread BLOCKED-ON-USER (survives session end), and
+  `contract check` refuses while any is open. Resolving promotes the answer to an ADR so it is never re-asked.
+  Consult stance + escalations at three fixed points: **rehydrate/orient · before every contract check ·
+  before any irreversible act.**
 - **Honest limit:** raw `Write`/`Edit`/`Bash` bypass any gate. Route consequential actions through the
   CLI to have real teeth; elsewhere the gate is *detect + surface*, not *prevent* — don't sell blocks
   you can't enforce.
@@ -108,8 +125,10 @@ sit last. Conforming to what's there beats imposing a default.
 
 ## Command map — enforcement lives here, not in this prose
 `rehydrate · intro · hydrate · profile · contract · verify (init/run/done/sync) · hygiene · friction ·
-clarify-depth · contradictions · claim · whiteboard · supersede · decision · journal · search · prefs · state`
-— run `python3 scripts/docs.py --help`.
+clarify-depth · contradictions · claim · whiteboard · supersede · decision · journal · search · prefs · state ·
+layout · feedback · run (start/mark/status/resume/close) · sink (add/status/import) · stance (freeze/confirm) ·
+escalate (raise/resolve) · ask (add/bump/close --evidence)`
+— run `python3 scripts/docs.py --help` · `docs.py --version` reports the installed version.
 
 ## Standing defaults
 Honesty over agreeableness. Ask, don't assume — self-serve first, as many questions as needed and zero

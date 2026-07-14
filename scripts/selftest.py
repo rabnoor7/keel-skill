@@ -62,6 +62,28 @@ def main():
     if suspect != EXPECT_SUSPECT:
         fails.append(f'suspect: got {sorted(suspect)}, expected {sorted(EXPECT_SUSPECT)}')
 
+    # _next_adr date-draft immunity (the "2027 bug"): a date-named journal draft in .keel/pending/
+    # once parsed as ADR 2026, so the next ADR landed as 2027-*.md. Fixed; locked here forever.
+    os.makedirs(os.path.join(root, '.keel', 'pending'), exist_ok=True)
+    with open(os.path.join(root, '.keel', 'pending', '2026-07-14-a-journal-draft.md'), 'w') as fh:
+        fh.write('# a journal draft\n')
+    nxt = docs._next_adr()
+    if nxt != 16:  # highest real ADR in fixtures is 0015
+        fails.append(f'_next_adr: got {nxt}, expected 16 (date-named draft must not poison numbering)')
+
+    # every registered command family stays registered (guards against parser-wiring regressions)
+    import io, contextlib
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+        try:
+            sys.argv = ['docs.py', '--help']; docs.main()
+        except SystemExit:
+            pass
+    helptext = buf.getvalue()
+    for cmdname in ('rehydrate', 'layout', 'feedback', 'run', 'sink', 'stance', 'escalate', 'ask'):
+        if cmdname not in helptext:
+            fails.append(f'command "{cmdname}" missing from --help (parser wiring regressed)')
+
     if fails:
         print('SELFTEST FAILED:')
         for f in fails:

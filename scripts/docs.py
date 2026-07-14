@@ -12,7 +12,8 @@ Layout (under the project root = cwd):
 Global prefs: ~/keel/preferences.md.
 
 Commands: init · rehydrate · hydrate · profile · decision · journal · supersede · contradictions · contract ·
-          verify · hygiene · friction · clarify-depth · claim · whiteboard · search · read · prefs · state · layout · feedback
+          verify · hygiene · friction · clarify-depth · claim · whiteboard · search · read · prefs · state ·
+          layout · feedback · run · sink · stance · escalate · ask     (--version prints the installed version)
 """
 import argparse, os, sys, json, re, hashlib, time, datetime, glob, platform
 from collections import defaultdict
@@ -442,24 +443,37 @@ def cmd_rehydrate(a):
         print(f'\n[!] HYGIENE — {len(hyg)} issue(s), e.g.: {hyg[0]}')
         print('    → run `docs.py hygiene` for the full list.')
 
+    parked = []
     for rid, s in _open_runs():
         npend = len(s['pending']) if isinstance(s['pending'], list) else s['pending']
         agem = int((time.time() - s['last_ts']) // 60)
-        advisory.append((f'run {rid} mid-flight: {len(s["done"])}/{s["total"] or "?"} done, {npend} pending', f'docs.py run resume {rid}  (or `run close {rid}` to abandon)'))
+        if agem > 7 * 24 * 60:  # >7 days idle: collapse to one compact line — never silent, never noisy
+            parked.append(rid); continue
+        age = f'{agem // 1440}d ago' if agem >= 1440 else (f'{agem // 60}h ago' if agem >= 60 else f'{agem}m ago')
+        advisory.append((f'run {rid} mid-flight: {len(s["done"])}/{s["total"] or "?"} done, {npend} pending ({age})', f'docs.py run resume {rid}  (or `run close {rid}` to abandon)'))
         print(f'\n[!] RUN MID-FLIGHT — {rid} "{s["man"].get("label")}": {len(s["done"])}/{s["total"] or "?"} done, '
-              f'{npend} pending, {len(s["failed"])} failed, last mark {agem}m ago' + ('  [STALLED]' if agem >= 10 else ''))
+              f'{npend} pending, {len(s["failed"])} failed, last mark {age}' + ('  [STALLED]' if agem >= 10 else ''))
         print(f'    → resume where it left off: docs.py run resume {rid}   (do NOT restart from 0)')
+    if parked:
+        advisory.append((f'{len(parked)} run(s) parked idle >7 days: {", ".join(parked)}', 'docs.py run status <id> — then resume or close'))
+        print(f'\n[!] PARKED — {len(parked)} run(s) idle >7 days: {", ".join(parked)} (resume or `run close`; never auto-deleted)')
 
     for stream, n, tgt in _unreconciled_sink():
         advisory.append((f'{n} captured record(s) in "{stream}" not yet merged into {tgt or "target"}', f'docs.py sink import --stream {stream}'))
         print(f'\n[!] CAPTURE INBOX — {n} record(s) in "{stream}" captured but not merged into {tgt or "target"}:')
         print(f'    → fetched data at risk of disposal. Reconcile: docs.py sink import --stream {stream}')
 
-    open_asks = [r for r in _load_jsonl(ASKS) if r.get('status') == 'open']
+    open_asks = [r for r in _load_asks() if r['status'] == 'open']
+    hot_asks = [r for r in open_asks if r['raised'] >= 3]
+    if hot_asks:
+        advisory.append((f'{len(hot_asks)} ask(s) raised 3+ times still open', 'address, or docs.py ask close <id> --evidence <path>'))
+        print(f'\n[!] RECURRING ASK(S) — raised 3+ times and still open:')
+        for r in sorted(hot_asks, key=lambda r: -r['raised'])[:4]:
+            print(f'    #{r["id"]} raised {r["raised"]}x: {r["text"][:84]}')
     if open_asks:
-        print(f'\n--- OPEN ASKS: {len(open_asks)} standing user ask(s) (advisory) ---')
-        for r in sorted(open_asks, key=lambda r: -r.get('raised', 1))[:5]:
-            print(f'    #{r["id"]} raised {r.get("raised", 1)}x: {r.get("text", "")[:84]}')
+        print(f'\n--- OPEN ASKS: {len(open_asks)} standing user ask(s) (docs/asks.md) ---')
+        for r in sorted(open_asks, key=lambda r: -r['raised'])[:5]:
+            print(f'    #{r["id"]} raised {r["raised"]}x: {r["text"][:84]}')
 
     js = sorted(glob.glob(os.path.join(JRN, '*.md')))
     print(f'\n--- newest journal --- ' + (os.path.basename(js[-1]) if js else '(none)'))
@@ -556,6 +570,11 @@ def cmd_supersede(a):
 # ---------------- hydrate (OUTBOUND — lands approved drafts, drains queue) ----------------
 
 def cmd_hydrate(a):
+    st = _stance()
+    if st and st.get('freeze'):
+        staged = [x for x in _load_jsonl(PENDING) if not x.get('drained') and x.get('staged')]
+        sys.exit(f'hydrate: FROZEN — stance "{st["name"]}" blocks landing into docs/. '
+                 f'{len(staged)} draft(s) staged and safe; `docs.py stance clear` first, then hydrate.')
     pend = _load_jsonl(PENDING)
     live = [x for x in pend if not x.get('drained')]
     landed = 0
@@ -885,7 +904,15 @@ def cmd_run(a):
     _ensure(RUNS)
     if a.action == 'start':
         rid = 'r' + _hash((a.label or 'run') + str(time.time()))[:4]
-        items = [x.strip() for x in _read(a.items).splitlines() if x.strip()] if a.items else None
+        items = None
+        if a.items:  # plain file of ids, or file.csv:column — never make the user hand-build a list
+            spec = a.items.split(':', 1)
+            raw = _read(spec[0])
+            if len(spec) == 2 and raw:
+                import csv as _csv
+                items = [r[spec[1]].strip() for r in _csv.DictReader(raw.splitlines()) if (r.get(spec[1]) or '').strip()]
+            else:
+                items = [x.strip() for x in raw.splitlines() if x.strip()]
         man = {'label': a.label or 'run', 'ts': time.time(), 'host': platform.node()}
         if items:
             man['items'] = items
@@ -893,6 +920,10 @@ def cmd_run(a):
             man['count'] = a.count
         _append_jsonl(os.path.join(RUNS, rid + '.jsonl'), man)
         print(f'RUN {rid} "{man["label"]}" — 0/{len(items) if items else a.count or "?"} (append-only ledger: .keel/runs/{rid}.jsonl)')
+        if not items:
+            print('[!] no item list — if this dies I can only say HOW MANY remain, not WHICH.')
+            print('    marks with real ids (`run mark ' + rid + ' <real-id>`) make resume exact as you go;')
+            print('    or start with --items <file> / --items <file.csv:column> to ingest ids from an existing artifact.')
     elif a.action == 'mark':
         if not a.run_id or not a.item:
             sys.exit('run mark <run-id> <item> [--status done|failed|skip] [--by agent]')
@@ -915,7 +946,11 @@ def cmd_run(a):
                     print(i)
                 print(f'# {len(s["pending"])} pending + {len(s["failed"])} failed to retry — skip-what-is-done is the resume', file=sys.stderr)
             else:
-                print(f'# item universe unknown (started with --count): {len(s["done"])} done, ~{npend} pending — mark with real ids to enable exact resume', file=sys.stderr)
+                # universe unknown — the ledger still auto-learned every marked id; emit the done-set to SKIP
+                print(f'# universe unknown (started with --count): {len(s["done"])} done, ~{npend} pending', file=sys.stderr)
+                print('# SKIP these already-done ids (auto-learned from marks) — everything else is fair game:', file=sys.stderr)
+                for i in s['done'] + s['skip']:
+                    print(i)
             return
         age = time.time() - s['last_ts']
         print(f'RUN {a.run_id} "{s["man"].get("label")}"  host={s["man"].get("host")}')
@@ -939,9 +974,18 @@ def cmd_sink(a):
         stream = os.path.join(INBOX, a.stream + '.jsonl')
         if any(r.get('hash') == h for r in _load_jsonl(stream)):
             print(f'sink: duplicate (hash {h}) — already buffered, not re-adding.'); return
-        _append_jsonl(stream, {'hash': h, 'target': a.target, 'provenance': a.provenance, 'payload': payload, 'ts': time.time()})
+        rec = {'hash': h, 'target': a.target, 'provenance': a.provenance, 'ts': time.time()}
+        if len(payload) > 262144:  # soft cap: big payloads go to a blob file, ledger keeps the pointer
+            _ensure(os.path.join(INBOX, 'blobs'))
+            bp = os.path.join(INBOX, 'blobs', h)
+            open(bp, 'w', encoding='utf-8').write(payload)
+            rec['blob'] = bp
+        else:
+            rec['payload'] = payload
+        _append_jsonl(stream, rec)
         n = len(_load_jsonl(stream))
-        print(f'sink: +1 {a.stream} (hash {h}) — {n} buffered durably' + (f' → {a.target}' if a.target else ''))
+        print(f'sink: +1 {a.stream} (hash {h}{", blob" if "blob" in rec else ""}) — {n} buffered durably'
+              + (f' → {a.target}' if a.target else ''))
     elif a.action == 'status':
         for p in sorted(glob.glob(os.path.join(INBOX, '*.jsonl'))):
             stream = os.path.basename(p)[:-6]
@@ -960,17 +1004,38 @@ def cmd_sink(a):
         rec = set(_read(recp).split())
         rows = _load_jsonl(stream)
         new = [r for r in rows if r.get('hash') not in rec]
-        merged = 0
+        merged, refused = 0, 0
         for r in new:
             tgt = r.get('target')
             if not tgt:
                 continue
-            _ensure(os.path.dirname(os.path.join(ROOT, tgt)) or ROOT)
-            with open(os.path.join(ROOT, tgt), 'a', encoding='utf-8') as f:
-                f.write(r['payload'].rstrip('\n') + '\n')
+            payload = r.get('payload') or (_read(r['blob']) if r.get('blob') else '')
+            tp = os.path.join(ROOT, tgt)
+            if tgt.endswith('.csv') and os.path.exists(tp):
+                # CSV-aware: never duplicate the header; refuse column-count mismatches loudly
+                header = _read(tp).splitlines()[0] if _read(tp).strip() else ''
+                lines = [l for l in payload.splitlines() if l.strip() and l.strip() != header.strip()]
+                bad = [l for l in lines if header and l.count(',') != header.count(',')]
+                if bad:
+                    refused += 1
+                    print(f'  [!] REFUSED {r["hash"]}: {len(bad)} row(s) have {bad[0].count(",") + 1} column(s), '
+                          f'target has {header.count(",") + 1} — fix the payload; not corrupting {tgt}.')
+                    continue
+                payload = '\n'.join(lines)
+                if not payload:
+                    rec.add(r['hash']); continue
+            _ensure(os.path.dirname(tp) or ROOT)
+            with open(tp, 'a', encoding='utf-8') as f:
+                f.write(payload.rstrip('\n') + '\n')
             rec.add(r['hash']); merged += 1
         open(recp, 'w').write('\n'.join(sorted(rec)))
-        print(f'sink import {a.stream}: {len(rows)} buffered → {merged} new merged, {len(rows) - len(new)} already present (hash dedup).')
+        print(f'sink import {a.stream}: {len(rows)} buffered → {merged} new merged, {len(rows) - len(new)} already present'
+              + (f', {refused} REFUSED (column mismatch)' if refused else '') + '.')
+        ap = os.path.join(VERIFY_DIR, 'audit.py')
+        if merged and os.path.exists(ap):  # catch what prevention missed — run the repo's own audit
+            print('post-merge verify (this repo has an audit):')
+            if os.system(f'"{sys.executable}" "{ap}"') != 0:
+                print('[!!] post-merge audit FAILED — inspect the target before building on it.')
 
 
 def _unreconciled_sink():
@@ -998,17 +1063,27 @@ def cmd_stance(a):
         except OSError:
             pass
         print('stance cleared — normal operation.')
+        # continuous durability across the freeze boundary: surface what was staged, offer the landing
+        pend = [x for x in _load_jsonl(PENDING) if not x.get('drained') and x.get('staged')]
+        if pend:
+            print(f'{len(pend)} draft(s) were staged during the stance and are waiting for approval:')
+            for x in pend[-6:]:
+                print(f'   {x.get("kind")}: {x.get("title", "")[:72]}')
+            print('→ land them now: docs.py hydrate')
         return
     if a.action == 'show' or not a.name:
         s = _stance()
         print(json.dumps(s, indent=2) if s else '(no standing stance)')
         return
     _ensure(STATE); _ensure_keel_ignored()
-    s = {'name': a.name, 'freeze': a.name == 'freeze' or bool(a.freeze),
-         'blocks_lightweight': a.name == 'freeze' or bool(a.freeze),
-         'memory': a.memory or 'silent', 'note': a.note or '', 'ts': time.time(), 'rehydrates_since': 0}
+    # two stances only (user-decided cut of named modes): freeze = hold everything durable;
+    # confirm = work proceeds but memory writes stage as drafts. --note carries the user's words verbatim.
+    s = {'name': a.name, 'freeze': a.name == 'freeze',
+         'blocks_lightweight': a.name == 'freeze',
+         'memory': 'confirm' if (a.name == 'confirm' or a.memory == 'confirm') else 'silent',
+         'note': a.note or '', 'ts': time.time(), 'rehydrates_since': 0}
     json.dump(s, open(STANCE, 'w'))
-    print(f'STANDING STANCE set: {a.name}' + (' — FREEZE: no builds/edits/ops until `stance clear`' if s['freeze'] else '')
+    print(f'STANDING STANCE set: {a.name}' + (' — FREEZE: no builds/edits/landings until `stance clear` (staging drafts still allowed)' if s['freeze'] else '')
           + (' — memory writes require confirmation (auto-draft)' if s['memory'] == 'confirm' else ''))
 
 
@@ -1043,37 +1118,55 @@ def cmd_escalate(a):
         print(f'escalation #{a.id} {tgt["status"]}' + (f' → choice: {a.choice}' if a.choice else ''))
 
 
+ASKS_MD = os.path.join(DOCS, 'asks.md')  # committed + human-editable: asks are project memory, not tool state
+
+
+def _load_asks():
+    out = []
+    for line in _read(ASKS_MD).splitlines():
+        m = re.match(r'- \[(open|closed)\] #(\d+) \(raised (\d+)x\) (.*?)(?: — evidence: (.+))?$', line)
+        if m:
+            out.append({'status': m.group(1), 'id': int(m.group(2)), 'raised': int(m.group(3)),
+                        'text': m.group(4), 'evidence': m.group(5)})
+    return out
+
+
+def _save_asks(rows):
+    _ensure(DOCS)
+    hdr = ('# Asks — standing user asks\n\n'
+           'One line per ask; hand-editable. An ask stays open until closed WITH evidence\n'
+           '(`docs.py ask close <id> --evidence <path>`); repeats are tracked (`ask bump <id>`).\n\n')
+    open(ASKS_MD, 'w').write(hdr + '\n'.join(
+        f'- [{r["status"]}] #{r["id"]} (raised {r["raised"]}x) {r["text"]}'
+        + (f' — evidence: {r["evidence"]}' if r.get('evidence') else '') for r in rows) + '\n')
+
+
 def cmd_ask(a):
+    rows = _load_asks()
     if a.action == 'add':
-        rows = _load_jsonl(ASKS)
-        aid = max((r.get('id', 0) for r in rows), default=0) + 1
-        _append_jsonl(ASKS, {'id': aid, 'text': a.text, 'status': 'open', 'raised': 1, 'ts': time.time()})
-        print(f'ask #{aid} recorded — stays open until VERIFIABLY resolved (close needs --evidence).')
+        aid = max((r['id'] for r in rows), default=0) + 1
+        rows.append({'status': 'open', 'id': aid, 'raised': 1, 'text': a.text, 'evidence': None})
+        _save_asks(rows)
+        print(f'ask #{aid} recorded → docs/asks.md (committed, hand-editable) — open until closed with --evidence.')
     elif a.action == 'bump':
-        rows = _load_jsonl(ASKS)
-        tgt = next((r for r in rows if r.get('id') == a.id), None)
+        tgt = next((r for r in rows if r['id'] == a.id), None)
         if not tgt:
             sys.exit(f'no ask #{a.id}')
-        tgt['raised'] = tgt.get('raised', 1) + 1
-        with open(ASKS, 'w') as f:
-            for r in rows:
-                f.write(json.dumps(r) + '\n')
-        print(f'ask #{a.id} raised {tgt["raised"]}x now — recurring asks are a loud signal.')
+        tgt['raised'] += 1
+        _save_asks(rows)
+        print(f'ask #{a.id} raised {tgt["raised"]}x now — recurring asks get loud at 3+.')
     elif a.action == 'list':
-        for r in _load_jsonl(ASKS):
-            if r.get('status') == 'open' or a.all:
-                print(f'  #{r["id"]} [{r.get("status")}] raised {r.get("raised", 1)}x: {r.get("text", "")[:90]}')
+        for r in rows:
+            if r['status'] == 'open' or a.all:
+                print(f'  #{r["id"]} [{r["status"]}] raised {r["raised"]}x: {r["text"][:90]}')
     elif a.action == 'close':
         if not a.evidence:
             sys.exit('[!] ask close REJECTED — no --evidence. "resolved" without proof is a claim, not a fact. (exit 1)')
-        rows = _load_jsonl(ASKS)
-        tgt = next((r for r in rows if r.get('id') == a.id and r.get('status') == 'open'), None)
+        tgt = next((r for r in rows if r['id'] == a.id and r['status'] == 'open'), None)
         if not tgt:
             sys.exit(f'no open ask #{a.id}')
         tgt['status'] = 'closed'; tgt['evidence'] = a.evidence
-        with open(ASKS, 'w') as f:
-            for r in rows:
-                f.write(json.dumps(r) + '\n')
+        _save_asks(rows)
         warn = '' if os.path.exists(os.path.join(ROOT, a.evidence)) else '   [!] evidence path not found on disk'
         print(f'ask #{a.id} closed → evidence: {a.evidence}{warn}')
 
@@ -1110,7 +1203,7 @@ def main():
     p.add_argument('--stream', default='default'); p.add_argument('--target'); p.add_argument('--provenance')
     p.add_argument('--data'); p.add_argument('--from', dest='from_file'); p.set_defaults(fn=cmd_sink)
     p = sub.add_parser('stance'); p.add_argument('action', choices=['set', 'clear', 'show'])
-    p.add_argument('name', nargs='?'); p.add_argument('--freeze', action='store_true')
+    p.add_argument('name', nargs='?', choices=['freeze', 'confirm'])
     p.add_argument('--memory', choices=['confirm', 'silent']); p.add_argument('--note'); p.set_defaults(fn=cmd_stance)
     p = sub.add_parser('escalate'); p.add_argument('action', choices=['raise', 'list', 'resolve', 'retract'])
     p.add_argument('id', nargs='?', type=int); p.add_argument('--question'); p.add_argument('--domain')
