@@ -125,6 +125,17 @@ deliverable (it fails if the audit never ran, failed, or the deliverable changed
 flags audit fields that drifted from data-model.md; the audit must model *legitimate* absence per field
 (a no-minimum row's 0, a 0-review row's blank rating), not one blanket threshold — a gate that cries wolf
 gets ignored. And every bug you fix becomes a permanent regression assertion. See `references/verify.md`.
+- **Long runs get audited WHILE they run.** Configure `verify batch --cmd "<small audit>" --every N` — a
+  failing per-batch audit HALTS the run (circuit breaker; `run resume --clear-halt` after fixing) instead
+  of discovering at hour six that everything since hour one is rot.
+- **Tabular deliverables carry provenance.** `verify provenance <file.csv> --require source,fetched_at
+  [--fresh-days N]` — a row without source + timestamp is a claim, not a fact.
+- **Output that answers an external source gets a coverage check.** `coverage init <source>` then
+  `coverage check <source> --against <output>` before done — every unaddressed point is listed by name
+  (keyword-level: it proves absence of coverage, not quality).
+- **When only the USER's real-world eyes can verify (UI, live flows): `livetest arm`.** `verify done` is
+  blocked until their verdict. You may relay the user's verdict verbatim via `livetest confirm/reject
+  --note "<their words>"` — you NEVER decide it yourself; self-certification is banned.
 
 ## 4 · Hydrate (outbound) — persist continuously, never at the end only
 Durability is a continuous invariant, not a closing ritual. Decisions and corrections enter the pending
@@ -150,7 +161,8 @@ clarify-depth · contradictions · claim · whiteboard · supersede · decision 
 layout · feedback · run (start/mark/status/resume/close) · sink (add/status/import) · stance (freeze/confirm) ·
 escalate (raise/resolve) · ask (add/bump/close --evidence) · match · preserve (snapshot/check) ·
 orphans · smoke (set/run/gate) · accept (add/show/check) · route (set/model/check) ·
-budget (cap/estimate/record/check) · critique (assume/research/alt/check)`
+budget (cap/estimate/record/check) · critique (assume/research/alt/check) · coverage (init/check) ·
+livetest (arm/confirm/reject) · handoff (send/list/ack) · verify batch · verify provenance`
 — run `python3 scripts/docs.py --help` · `docs.py --version` reports the installed version.
 
 ## Standing defaults

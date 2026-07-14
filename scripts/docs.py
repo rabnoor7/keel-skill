@@ -14,7 +14,7 @@ Global prefs: ~/keel/preferences.md.
 Commands: init · rehydrate · hydrate · profile · decision · journal · supersede · contradictions · contract ·
           verify · hygiene · friction · clarify-depth · claim · whiteboard · search · read · prefs · state ·
           layout · feedback · run · sink · stance · escalate · ask · match · preserve · orphans · smoke ·
-          accept · route · budget · critique
+          accept · route · budget · critique · coverage · livetest · handoff
           (--version prints the installed version)
 """
 import argparse, os, sys, json, re, hashlib, time, datetime, glob, platform
@@ -547,12 +547,6 @@ def cmd_rehydrate(a):
         advisory.append(('livetest HANDED OFF — awaiting the user\'s live verdict', 'docs.py livetest confirm|reject --note "..."'))
         print('\n[!] LIVETEST — handed off to the user; `verify done` stays blocked until their verdict.')
 
-    subs = _substrate_issues()
-    if subs:
-        advisory.append((f'{len(subs)} external substrate issue(s)', 'docs.py substrate sync <label> after re-reading it'))
-        print('\n[!] SUBSTRATES — declared external anchors of truth need attention:')
-        for lbl, msg in subs[:4]:
-            print(f'    {lbl}: {msg}')
 
     coord = _coord_dir()
     if coord and os.path.exists(os.path.join(coord, 'handoffs.jsonl')):
@@ -1331,7 +1325,6 @@ def _save_asks(rows):
 BATCH_CFG = os.path.join(STATE, 'verify', 'batch.json')
 COVERAGE_DIR = os.path.join(STATE, 'coverage')
 LIVETEST = os.path.join(STATE, 'livetest.json')
-SUBSTRATES = os.path.join(STATE, 'substrates.jsonl')
 
 
 def _coord_dir():
@@ -1408,44 +1401,6 @@ def cmd_livetest(a):
         print(json.dumps(json.load(open(LIVETEST)), indent=2) if os.path.exists(LIVETEST) else '(no livetest state)')
 
 
-def cmd_substrate(a):
-    if a.action == 'add':
-        p = os.path.abspath(os.path.expanduser(a.path))
-        if not os.path.isfile(p):
-            sys.exit(f'substrate add: {a.path} is not a file')
-        _append_jsonl(SUBSTRATES, {'label': a.label or os.path.basename(p), 'path': p,
-                                   'hash': _hash(_read(p)), 'ts': time.time()})
-        print(f'substrate: "{a.label or os.path.basename(p)}" registered as an external anchor of truth — '
-              'rehydrate will flag drift and sync debt.')
-    elif a.action == 'sync':
-        rows = _load_jsonl(SUBSTRATES)
-        tgt = next((r for r in rows if r.get('label') == a.path), None)  # positional doubles as the label here
-        if not tgt:
-            sys.exit(f'no substrate "{a.path}"')
-        tgt['hash'] = _hash(_read(tgt['path'])); tgt['ts'] = time.time()
-        with open(SUBSTRATES, 'w') as f:
-            for r in rows:
-                f.write(json.dumps(r) + '\n')
-        print(f'substrate: "{a.path}" re-read and marked in sync.')
-    elif a.action == 'list':
-        for r in _load_jsonl(SUBSTRATES):
-            print(f'  {r["label"]}: {r["path"]}')
-
-
-def _substrate_issues():
-    out = []
-    for r in _load_jsonl(SUBSTRATES):
-        if not os.path.exists(r['path']):
-            out.append((r['label'], 'MISSING — external anchor file is gone'))
-        elif _hash(_read(r['path'])) != r.get('hash'):
-            out.append((r['label'], 'DRIFTED — changed since last sync; re-read it (`substrate sync <label>`)'))
-        else:
-            newest_dec = max((_mtime(p) for p in _decisions()), default=0)
-            if newest_dec > r.get('ts', 0):
-                out.append((r['label'], 'SYNC DEBT — decisions landed after last sync; the external anchor may be behind'))
-    return out
-
-
 def cmd_handoff(a):
     coord = _coord_dir()
     if not coord:
@@ -1481,7 +1436,7 @@ def cmd_handoff(a):
         print(f'handoff #{a.id} acked.')
 
 
-# ---------------- THIN SLICES round 3: accept · route · budget · critique ----------------
+# ---------------- THIN SLICES round 3: accept · route · budget · critique · coverage · livetest · handoff ----------------
 
 ACCEPT_DIR = os.path.join(DOCS, 'acceptance')
 ROUTING = os.path.join(DOCS, 'routing.md')
@@ -1823,8 +1778,6 @@ def main():
     p.add_argument('--against'); p.set_defaults(fn=cmd_coverage)
     p = sub.add_parser('livetest'); p.add_argument('action', choices=['arm', 'confirm', 'reject', 'status'])
     p.add_argument('--note'); p.set_defaults(fn=cmd_livetest)
-    p = sub.add_parser('substrate'); p.add_argument('action', choices=['add', 'sync', 'list'])
-    p.add_argument('path', nargs='?'); p.add_argument('--label'); p.set_defaults(fn=cmd_substrate)
     p = sub.add_parser('handoff'); p.add_argument('action', choices=['send', 'list', 'ack'])
     p.add_argument('id', nargs='?', type=int); p.add_argument('--to'); p.add_argument('--title'); p.add_argument('--body')
     p.add_argument('--from', dest='from_file'); p.add_argument('--all', action='store_true'); p.set_defaults(fn=cmd_handoff)
