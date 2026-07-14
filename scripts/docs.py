@@ -14,8 +14,12 @@ Global prefs: ~/keel/preferences.md.
 Commands: init · rehydrate · hydrate · profile · decision · journal · supersede · contradictions · contract ·
           verify · hygiene · friction · clarify-depth · claim · whiteboard · search · read · prefs · state · layout · feedback
 """
-import argparse, os, sys, json, re, hashlib, time, datetime, glob, fcntl
+import argparse, os, sys, json, re, hashlib, time, datetime, glob, platform
 from collections import defaultdict
+try:
+    import fcntl  # Unix; on Windows the whiteboard degrades to unlocked appends (documented)
+except ImportError:
+    fcntl = None
 
 ROOT = os.getcwd()
 DOCS = os.path.join(ROOT, 'docs')
@@ -50,6 +54,10 @@ CONTRA_B = re.compile(rf'{_ADRREF}\s+(?:is\s+|was\s+|now\s+){{0,3}}(?:supersed\w
 # so it fires on first use after an install and self-suppresses forever after — per install, not per project.
 SKILL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INTRO_MARKER = os.path.join(SKILL_ROOT, '.introduced')
+try:
+    KEEL_VERSION = open(os.path.join(SKILL_ROOT, 'VERSION')).read().strip()
+except OSError:
+    KEEL_VERSION = 'unknown'
 
 
 def _now(): return datetime.datetime.now()
@@ -342,10 +350,10 @@ def cmd_intro(a):
 
 
 def cmd_rehydrate(a):
-    problems = 0
+    blocking, advisory = [], []  # (summary, fix-command) — split so exit-1 means "do not build", not "mtime moved"
     if _maybe_intro():
         print()
-    print('=' * 70); print('KEEL REHYDRATE — digest across all tiers'); print('=' * 70)
+    print('=' * 70); print(f'KEEL REHYDRATE — digest across all tiers  (keel {KEEL_VERSION})'); print('=' * 70)
     st = _stance()
     if st:
         st['rehydrates_since'] = st.get('rehydrates_since', 0) + 1
@@ -357,7 +365,7 @@ def cmd_rehydrate(a):
               + '\n>>> lift with: docs.py stance clear')
     esc_open = [r for r in _load_jsonl(ESCALATIONS) if r.get('status') == 'open']
     if esc_open:
-        problems += 1
+        blocking.append((f'{len(esc_open)} escalation(s) BLOCKED ON USER', 'docs.py escalate resolve <id> --choice ...'))
         print(f'\n[!!] BLOCKED — {len(esc_open)} open escalation(s) awaiting the USER (do not proceed on these threads):')
         for r in esc_open[:4]:
             print(f'    #{r["id"]} [{r.get("because")}] {r.get("question", "")[:88]}')
@@ -392,13 +400,13 @@ def cmd_rehydrate(a):
 
     stale = _anchor_staleness()
     if stale:
-        problems += 1
+        advisory.append((f'anchor {len(stale)} edit(s) behind reality', 'docs.py hydrate'))
         print(f'\n[!] ANCHOR STALE — {len(stale)} file(s) changed after the anchor: {stale[:6]}')
         print('    → the first thing a session reads is behind reality. Run `hydrate` to refresh it.')
 
     contra = _contradictions()
     if contra:
-        problems += 1
+        blocking.append((f'{len(contra)} live contradiction(s) — an unmarked ADR is superseded', f'docs.py supersede {contra[0][2]} --title "..."'))
         print(f'\n[!!] CONTRADICTIONS — {len(contra)} lower-tier correction(s) supersede an unmarked ADR:')
         for tier, path, n, line in contra[:8]:
             print(f'    ADR {n}: {tier}:{path} says "{line}"')
@@ -406,11 +414,12 @@ def cmd_rehydrate(a):
 
     sus = _suspect_decisions()
     if sus:
+        advisory.append((f'suspect decision(s) {sus} referenced as superseded but not marked', 'review + docs.py supersede if real'))
         print(f'\n[!] SUSPECT (referenced as superseded, not marked): {sus}')
 
     pend = [x for x in _load_jsonl(PENDING) if not x.get('drained')]
     if pend:
-        problems += 1
+        advisory.append((f'{len(pend)} unflushed decision/journal item(s) from a prior session', 'docs.py hydrate'))
         print(f'\n[!] {len(pend)} UNFLUSHED item(s) from a prior session (visible debt):')
         for x in pend[-6:]:
             print(f'    {x.get("kind")}: {x.get("title", "")[:80]}' + ('  (DRAFT)' if x.get('staged') else ''))
@@ -418,27 +427,31 @@ def cmd_rehydrate(a):
 
     if os.path.exists(VERIFY_STAMP):
         s = json.load(open(VERIFY_STAMP))
-        if s.get('result') != 'pass' or s.get('deliverables') != _deliverable_hash():
-            problems += 1
-            print('\n[!] VERIFY STALE/FAILED — the deliverable is not covered by a fresh passing audit.')
-            print('    → run `docs.py verify run`; "done" is gated on it (`verify done`).')
+        if s.get('result') != 'pass':
+            blocking.append(('last audit FAILED — deliverable is not in a passing state', 'docs.py verify run'))
+            print('\n[!!] VERIFY FAILED — the last audit did not pass.')
+            print('    → fix, then re-run: docs.py verify run; "done" is gated on it (`verify done`).')
+        elif s.get('deliverables') != _deliverable_hash():
+            advisory.append(('verify stamp stale — deliverables changed since last passing audit', 'docs.py verify run'))
+            print('\n[!] VERIFY STALE — deliverables changed since the last PASSING audit (files moved/edited).')
+            print('    → re-run to confirm still-green: docs.py verify run')
 
     hyg = _hygiene_problems()
     if hyg:
-        problems += 1
+        advisory.append((f'{len(hyg)} hygiene issue(s) in deliverable dirs', 'docs.py hygiene'))
         print(f'\n[!] HYGIENE — {len(hyg)} issue(s), e.g.: {hyg[0]}')
         print('    → run `docs.py hygiene` for the full list.')
 
     for rid, s in _open_runs():
-        problems += 1
         npend = len(s['pending']) if isinstance(s['pending'], list) else s['pending']
         agem = int((time.time() - s['last_ts']) // 60)
+        advisory.append((f'run {rid} mid-flight: {len(s["done"])}/{s["total"] or "?"} done, {npend} pending', f'docs.py run resume {rid}  (or `run close {rid}` to abandon)'))
         print(f'\n[!] RUN MID-FLIGHT — {rid} "{s["man"].get("label")}": {len(s["done"])}/{s["total"] or "?"} done, '
               f'{npend} pending, {len(s["failed"])} failed, last mark {agem}m ago' + ('  [STALLED]' if agem >= 10 else ''))
         print(f'    → resume where it left off: docs.py run resume {rid}   (do NOT restart from 0)')
 
     for stream, n, tgt in _unreconciled_sink():
-        problems += 1
+        advisory.append((f'{n} captured record(s) in "{stream}" not yet merged into {tgt or "target"}', f'docs.py sink import --stream {stream}'))
         print(f'\n[!] CAPTURE INBOX — {n} record(s) in "{stream}" captured but not merged into {tgt or "target"}:')
         print(f'    → fetched data at risk of disposal. Reconcile: docs.py sink import --stream {stream}')
 
@@ -450,9 +463,18 @@ def cmd_rehydrate(a):
 
     js = sorted(glob.glob(os.path.join(JRN, '*.md')))
     print(f'\n--- newest journal --- ' + (os.path.basename(js[-1]) if js else '(none)'))
+    if blocking or advisory:
+        print('\n--- CORRECTIVE ACTIONS (' + f'{len(blocking)} blocking · {len(advisory)} advisory) ---')
+        for i, (msg, fix) in enumerate(blocking, 1):
+            print(f'  [B{i}] {msg}\n       → {fix}')
+        for i, (msg, fix) in enumerate(advisory, 1):
+            print(f'  [A{i}] {msg}\n       → {fix}')
     print('\n' + '=' * 70)
-    if problems:
-        print(f'VERDICT: ⚠️  {problems} issue(s) — resolve before building. (exit 1)'); sys.exit(1)
+    if blocking:
+        print(f'VERDICT: ⛔ {len(blocking)} BLOCKING issue(s) — do not build on this state.'
+              + (f' ({len(advisory)} advisory.)' if advisory else '') + ' (exit 1)'); sys.exit(1)
+    if advisory:
+        print(f'VERDICT: ⚠️  clean to build — {len(advisory)} advisory item(s) to tend when convenient.'); return
     print('VERDICT: ✅ clean — rehydrated.')
 
 
@@ -677,7 +699,11 @@ def cmd_whiteboard(a):
     _ensure(STATE)
     if a.action == 'post':
         with open(WHITEBOARD, 'a') as f:
-            fcntl.flock(f, fcntl.LOCK_EX); f.write(f'{_now():%H:%M:%S} {a.by or "agent"}: {a.message}\n'); fcntl.flock(f, fcntl.LOCK_UN)
+            if fcntl:
+                fcntl.flock(f, fcntl.LOCK_EX)
+            f.write(f'{_now():%H:%M:%S} {a.by or "agent"}: {a.message}\n')
+            if fcntl:
+                fcntl.flock(f, fcntl.LOCK_UN)
         print('posted.')
     else:
         print(_read(WHITEBOARD) or '(whiteboard empty)')
@@ -860,7 +886,7 @@ def cmd_run(a):
     if a.action == 'start':
         rid = 'r' + _hash((a.label or 'run') + str(time.time()))[:4]
         items = [x.strip() for x in _read(a.items).splitlines() if x.strip()] if a.items else None
-        man = {'label': a.label or 'run', 'ts': time.time(), 'host': os.uname().nodename}
+        man = {'label': a.label or 'run', 'ts': time.time(), 'host': platform.node()}
         if items:
             man['items'] = items
         elif a.count:
@@ -1054,6 +1080,7 @@ def cmd_ask(a):
 
 def main():
     ap = argparse.ArgumentParser(prog='docs.py', description='keel memory + enforcement CLI')
+    ap.add_argument('--version', action='version', version=f'keel {KEEL_VERSION}')
     sub = ap.add_subparsers(dest='cmd', required=True)
     for name in ('init', 'rehydrate', 'hydrate', 'contradictions', 'friction'):
         sub.add_parser(name).set_defaults(fn=globals()[f'cmd_{name}'])
