@@ -11,16 +11,14 @@ Layout (under the project root = cwd):
   .keel/                 gitignored state: pending/, contract.json, verify.stamp, deliverables, profile, ...
 Global prefs: ~/keel/preferences.md.
 
-Commands: init · rehydrate · hydrate · profile · decision · journal · supersede · contradictions ·
-          contract · verify · hygiene · friction · clarify-depth · claim · whiteboard · search · read · prefs · state
+Commands: init · rehydrate · hydrate · profile · decision · journal · supersede · contradictions · contract ·
+          verify · hygiene · friction · clarify-depth · claim · whiteboard · search · read · prefs · state · layout · feedback
 """
 import argparse, os, sys, json, re, hashlib, time, datetime, glob, fcntl
 from collections import defaultdict
 
 ROOT = os.getcwd()
 DOCS = os.path.join(ROOT, 'docs')
-DEC = os.path.join(DOCS, 'decisions')
-JRN = os.path.join(DOCS, 'journal')
 MEM = os.path.join(ROOT, 'memory')
 STATE = os.path.join(ROOT, '.keel')
 PENDING = os.path.join(STATE, 'pending.jsonl')
@@ -32,8 +30,16 @@ VERIFY_DIR = os.path.join(STATE, 'verify')
 VERIFY_STAMP = os.path.join(STATE, 'verify.stamp')
 CLARIFY = os.path.join(STATE, 'clarify_depth')
 DELIVERABLES = os.path.join(STATE, 'deliverables')
-ANCHOR = os.path.join(DOCS, 'architecture.md')
 GLOBAL = os.path.expanduser('~/keel/preferences.md')
+# Canonical slot paths — what `init` scaffolds for a brand-new project. The layout-aware ANCHOR/DEC/JRN are
+# resolved below once the helpers exist; on a canonical repo they equal these, so writes stay byte-identical.
+ANCHOR_CANON = os.path.join(DOCS, 'architecture.md')
+DEC_CANON = os.path.join(DOCS, 'decisions')
+JRN_CANON = os.path.join(DOCS, 'journal')
+# Skill-feedback log — friction/wishes about keel ITSELF. Central cross-project corpus (survives reinstalls)
+# + per-project mirror. Local only; never sent anywhere.
+FEEDBACK_CENTRAL = os.path.expanduser('~/.claude/keel/feedback.jsonl')
+FEEDBACK_LOCAL = os.path.join(STATE, 'feedback.jsonl')
 PROFILES = ('web-app', 'data-pipeline', 'automation', 'cli-tool', 'ml')
 # A supersession CLAIM (not mere co-occurrence). Two grammatical shapes, both requiring the ADR to be the
 # verb's object — so "override files … see ADR 14" and "do NOT web-search … ADR 13" stay clean.
@@ -75,6 +81,8 @@ def _slug(t): return re.sub(r'[^a-z0-9]+', '-', t.lower()).strip('-')[:60] or 'e
 
 def _append_jsonl(p, obj):
     _ensure(os.path.dirname(p))
+    if p.startswith(STATE):
+        _ensure_keel_ignored()
     with open(p, 'a', encoding='utf-8') as f:
         f.write(json.dumps(obj) + '\n')
 
@@ -90,6 +98,39 @@ def _load_jsonl(p):
 
 def _slugify_root():
     return re.sub(r'[/.]', '-', ROOT)  # mirror Claude Code's project-memory dir naming
+
+
+# ---------------- layout resolution (robust enforcement on non-canonical repos) ----------------
+# keel enforces on whatever layout a repo actually uses. The anchor may be README/CLAUDE/AGENTS when there
+# is no docs/architecture.md; decisions/journal may live under adr/ or docs/rfcs/. Resolution order:
+# explicit `.keel/layout` override  >  first existing autodetected candidate  >  canonical default.
+# On a canonical repo every slot resolves to the canonical path — so checks AND write targets are unchanged.
+
+def _layout_override(slot):
+    """`.keel/layout` holds `slot=relpath` lines; an explicit user override always wins over autodetection."""
+    for line in _read(os.path.join(STATE, 'layout')).splitlines():
+        if '=' in line:
+            k, v = line.split('=', 1)
+            if k.strip() == slot and v.strip():
+                return os.path.abspath(os.path.join(ROOT, os.path.expanduser(v.strip())))
+    return None
+
+
+def _resolve_file(slot, default, candidates):
+    return _layout_override(slot) or next((c for c in candidates if os.path.isfile(c)), default)
+
+
+def _resolve_dir(slot, default, candidates):
+    return _layout_override(slot) or next(
+        (c for c in candidates if os.path.isdir(c) and glob.glob(os.path.join(c, '*.md'))), default)
+
+
+ANCHOR = _resolve_file('anchor', ANCHOR_CANON, [
+    ANCHOR_CANON, os.path.join(ROOT, 'README.md'), os.path.join(ROOT, 'CLAUDE.md'), os.path.join(ROOT, 'AGENTS.md')])
+DEC = _resolve_dir('decisions', DEC_CANON, [
+    DEC_CANON, os.path.join(ROOT, 'adr'), os.path.join(DOCS, 'rfcs'), os.path.join(ROOT, 'rfcs'), os.path.join(ROOT, 'ADR')])
+JRN = _resolve_dir('journal', JRN_CANON, [
+    JRN_CANON, os.path.join(ROOT, 'journal'), os.path.join(DOCS, 'journals')])
 
 
 def _memory_dirs():
@@ -145,12 +186,12 @@ def _hygiene_problems():
 # ---------------- init ----------------
 
 def cmd_init(a):
-    _ensure(DOCS, DEC, JRN, MEM, STATE, CLAIMS, VERIFY_DIR,
+    _ensure(DOCS, DEC_CANON, JRN_CANON, MEM, STATE, CLAIMS, VERIFY_DIR,
             os.path.join(ROOT, 'archive', 'inputs'), os.path.join(ROOT, 'archive', 'scratch'))
     if not os.path.exists(DELIVERABLES):
         open(DELIVERABLES, 'w').write('data\n')  # finals live here; intermediates/scratch → archive/
-    if not os.path.exists(ANCHOR):
-        with open(ANCHOR, 'w') as f:
+    if not os.path.exists(ANCHOR_CANON):
+        with open(ANCHOR_CANON, 'w') as f:
             f.write('# Architecture — REHYDRATION ANCHOR\n\n'
                     '> Fresh session? Run `python3 <skill>/scripts/docs.py rehydrate`. Read this first,\n'
                     '> then decisions/, then the newest journal.\n\n## What this is\n(fill in)\n\n'
@@ -165,6 +206,32 @@ def cmd_init(a):
 # ---------------- checks (the reliability core) ----------------
 
 def _decisions(): return sorted(glob.glob(os.path.join(DEC, '*.md')))
+
+
+def _doc_inventory():
+    """Every *.md under the doc root(s) + resolved slot dirs, tagged by slot. This is what closes the
+    'rehydrate only reads canonical names' gap — extra/differently-named docs are surfaced, never skipped."""
+    files = set()
+    for r in (DOCS, DEC, JRN):
+        if os.path.isdir(r):
+            files.update(os.path.abspath(p) for p in glob.glob(os.path.join(r, '**', '*.md'), recursive=True))
+    # root-level docs (README/CLAUDE/AGENTS/read-first manuals) carry real rules on non-canonical repos —
+    # without this shallow sweep, "nothing silently skipped" is a false promise there.
+    files.update(os.path.abspath(p) for p in glob.glob(os.path.join(ROOT, '*.md')))
+    if os.path.isfile(ANCHOR):
+        files.add(os.path.abspath(ANCHOR))
+    anch, dm = os.path.abspath(ANCHOR), os.path.abspath(os.path.join(DOCS, 'data-model.md'))
+    decset = {os.path.abspath(p) for p in _decisions()}
+    jrnset = {os.path.abspath(p) for p in glob.glob(os.path.join(JRN, '*.md'))}
+    tagged = []
+    for ap in sorted(files):
+        if ap == anch: t = 'anchor'
+        elif ap == dm: t = 'data-model'
+        elif ap in decset: t = 'decision'
+        elif ap in jrnset: t = 'journal'
+        else: t = 'other'
+        tagged.append((t, os.path.relpath(ap, ROOT) if ap.startswith(ROOT) else ap))
+    return tagged
 
 
 def _anchor_staleness():
@@ -279,14 +346,43 @@ def cmd_rehydrate(a):
     if _maybe_intro():
         print()
     print('=' * 70); print('KEEL REHYDRATE — digest across all tiers'); print('=' * 70)
+    st = _stance()
+    if st:
+        st['rehydrates_since'] = st.get('rehydrates_since', 0) + 1
+        json.dump(st, open(STANCE, 'w'))
+        print(f'\n>>> STANDING STANCE: {st["name"]} (set {st["rehydrates_since"]} rehydrate(s) ago)'
+              + (' — FREEZE: no builds/edits/ops' if st.get('freeze') else '')
+              + (' — memory writes need confirmation' if st.get('memory') == 'confirm' else '')
+              + (f'\n>>> note: {st["note"]}' if st.get('note') else '')
+              + '\n>>> lift with: docs.py stance clear')
+    esc_open = [r for r in _load_jsonl(ESCALATIONS) if r.get('status') == 'open']
+    if esc_open:
+        problems += 1
+        print(f'\n[!!] BLOCKED — {len(esc_open)} open escalation(s) awaiting the USER (do not proceed on these threads):')
+        for r in esc_open[:4]:
+            print(f'    #{r["id"]} [{r.get("because")}] {r.get("question", "")[:88]}')
+        print('    → docs.py escalate resolve <id> --choice ...')
     print(f'\nPROFILE: {_read(PROFILE).strip() or "(unset — run: docs.py profile <name>)"}')
     mdirs = _memory_dirs()
     print('MEMORY tiers found: ' + (', '.join((os.path.relpath(d, ROOT) if d.startswith(ROOT) else d) for d in mdirs) or '(none)'))
 
     if os.path.exists(ANCHOR):
-        print('\n--- ANCHOR (docs/architecture.md) ---\n' + '\n'.join(_read(ANCHOR).splitlines()[:18]))
+        alabel = os.path.relpath(ANCHOR, ROOT) if os.path.abspath(ANCHOR).startswith(ROOT) else ANCHOR
+        print(f'\n--- ANCHOR ({alabel}) ---\n' + '\n'.join(_read(ANCHOR).splitlines()[:18]))
     else:
-        print('\n(no docs/architecture.md — run docs.py init)')
+        print('\n(no anchor — looked for docs/architecture.md, README/CLAUDE/AGENTS.md — run docs.py init)')
+
+    inv = _doc_inventory()
+    other = [rel for t, rel in inv if t == 'other']
+    ndec = sum(1 for t, _ in inv if t == 'decision')
+    njrn = sum(1 for t, _ in inv if t == 'journal')
+    print(f'\n--- DOCS INVENTORY: {len(inv)} doc(s) — nothing silently skipped ---')
+    for t, rel in inv:
+        if t in ('anchor', 'data-model'):
+            print(f'   [{t}] {rel}')
+    print(f'   [decisions] {ndec} · [journal] {njrn}')
+    if other:
+        print(f'   [other] {" · ".join(other)}   ← surfaced, read on demand')
 
     decs = _decisions()
     print(f'\n--- DECISIONS: {len(decs)} ADR(s) ---')
@@ -333,6 +429,25 @@ def cmd_rehydrate(a):
         print(f'\n[!] HYGIENE — {len(hyg)} issue(s), e.g.: {hyg[0]}')
         print('    → run `docs.py hygiene` for the full list.')
 
+    for rid, s in _open_runs():
+        problems += 1
+        npend = len(s['pending']) if isinstance(s['pending'], list) else s['pending']
+        agem = int((time.time() - s['last_ts']) // 60)
+        print(f'\n[!] RUN MID-FLIGHT — {rid} "{s["man"].get("label")}": {len(s["done"])}/{s["total"] or "?"} done, '
+              f'{npend} pending, {len(s["failed"])} failed, last mark {agem}m ago' + ('  [STALLED]' if agem >= 10 else ''))
+        print(f'    → resume where it left off: docs.py run resume {rid}   (do NOT restart from 0)')
+
+    for stream, n, tgt in _unreconciled_sink():
+        problems += 1
+        print(f'\n[!] CAPTURE INBOX — {n} record(s) in "{stream}" captured but not merged into {tgt or "target"}:')
+        print(f'    → fetched data at risk of disposal. Reconcile: docs.py sink import --stream {stream}')
+
+    open_asks = [r for r in _load_jsonl(ASKS) if r.get('status') == 'open']
+    if open_asks:
+        print(f'\n--- OPEN ASKS: {len(open_asks)} standing user ask(s) (advisory) ---')
+        for r in sorted(open_asks, key=lambda r: -r.get('raised', 1))[:5]:
+            print(f'    #{r["id"]} raised {r.get("raised", 1)}x: {r.get("text", "")[:84]}')
+
     js = sorted(glob.glob(os.path.join(JRN, '*.md')))
     print(f'\n--- newest journal --- ' + (os.path.basename(js[-1]) if js else '(none)'))
     print('\n' + '=' * 70)
@@ -346,13 +461,30 @@ def cmd_rehydrate(a):
 def _next_adr():
     n = 0
     for p in _decisions() + glob.glob(os.path.join(STATE, 'pending', '*.md')):
-        m = re.match(r'0*(\d+)', os.path.basename(p))
+        b = os.path.basename(p)
+        if re.match(r'\d{4}-\d{2}-\d{2}-', b):  # date-named journal draft, not an ADR — would poison numbering
+            continue
+        m = re.match(r'0*(\d+)', b)
         if m:
             n = max(n, int(m.group(1)))
     return n + 1
 
 
+def _ensure_keel_ignored():
+    """`.keel/` is private tool state and must never be committable — init isn't always run before the first
+    state write, so any command that writes into .keel/ guarantees the ignore rule itself."""
+    if os.path.isdir(os.path.join(ROOT, '.git')):
+        gi = os.path.join(ROOT, '.gitignore')
+        if '.keel/' not in _read(gi):
+            with open(gi, 'a') as f:
+                f.write('\n.keel/\n')
+
+
 def _emit_record(kind, fn_name, content, target_dir, draft, title, extra=None):
+    st = _stance()
+    if st and st.get('memory') == 'confirm' and not draft:
+        draft = True  # standing "confirm what you save" stance: memory writes auto-stage as drafts
+        print(f'(stance "{st["name"]}": memory=confirm — staging as DRAFT for your approval)')
     rec = {'kind': kind, 'title': title, 'ts': time.time()}
     if extra:
         rec.update(extra)
@@ -439,6 +571,14 @@ def cmd_contract(a):
         c = json.load(open(CONTRACT)); c['approved'] = True; c['ts'] = time.time(); json.dump(c, open(CONTRACT, 'w'))
         print('contract approved — build may proceed.')
     elif a.action == 'check':
+        st = _stance()
+        if st and st.get('freeze'):
+            print(f'contract check: ✗ FROZEN — standing stance "{st["name"]}" blocks ALL builds (even lightweight lane).'
+                  f'\n  note: {st.get("note") or "(none)"}   lift with: docs.py stance clear'); sys.exit(1)
+        esc_open = [r for r in _load_jsonl(ESCALATIONS) if r.get('status') == 'open']
+        if esc_open:
+            print(f'contract check: ✗ BLOCKED-ON-USER — {len(esc_open)} open escalation(s) (#'
+                  + ', #'.join(str(r["id"]) for r in esc_open[:4]) + '). Resolve before building.'); sys.exit(1)
         if not os.path.exists(CONTRACT):
             print('contract check: NONE — no build without a signed contract.'); sys.exit(1)
         c = json.load(open(CONTRACT))
@@ -585,6 +725,11 @@ def cmd_read(a):
         print(f'\n===== {os.path.relpath(p, ROOT)} =====\n' + _read(p))
     if len(glob.glob(os.path.join(JRN, '*.md'))) > len(js):
         print(f'\n(showing latest {len(js)} journal entries — use `search` for older)')
+    if getattr(a, 'all', False):  # --all was a declared no-op; now it dumps the [other] docs too
+        for t, rel in _doc_inventory():
+            if t == 'other':
+                p = os.path.join(ROOT, rel)
+                print(f'\n===== {rel} [other] =====\n' + _read(p))
 
 
 def cmd_prefs(a):
@@ -628,6 +773,285 @@ def cmd_clarify(a):
         print((_read(CLARIFY).strip() or 'thorough') + '  (how hard to clarify before building; thorough = enumerate every open option)')
 
 
+def cmd_feedback(a):
+    """Log friction/wishes about keel ITSELF — cross-project corpus + per-project mirror. Local only, never sent.
+    Fires when the user signals the tool missed something, should have acted differently, or a wish about keel."""
+    if not getattr(a, 'note', None):
+        rows = _load_jsonl(FEEDBACK_CENTRAL)
+        if not rows:
+            print(f'no keel-feedback yet — add via: docs.py feedback --note "..."   (log: {FEEDBACK_CENTRAL})'); return
+        print(f'{len(rows)} keel-feedback entry(ies) — newest first  (central: {FEEDBACK_CENTRAL}):')
+        for r in reversed(rows[-15:]):
+            print(f'  [{str(r.get("ts",""))[:10]}] ({r.get("severity","-")}) {r.get("project","?")}: {r.get("note","")[:140]}'
+                  + (f'  → {r["ref"]}' if r.get('ref') else ''))
+        return
+    rec = {'ts': _now().isoformat(), 'project': os.path.basename(ROOT.rstrip('/')) or ROOT, 'root': ROOT,
+           'profile': _read(PROFILE).strip() or None, 'severity': getattr(a, 'severity', None) or 'med',
+           'ref': getattr(a, 'ref', None), 'note': a.note}
+    _append_jsonl(FEEDBACK_CENTRAL, rec)   # cross-project corpus to improve keel later
+    _append_jsonl(FEEDBACK_LOCAL, rec)     # per-project mirror
+    print(f'· logged to keel-feedback ({rec["severity"]}) — central + per-project.')
+
+
+def cmd_layout(a):
+    """Show the resolved layout, or record an explicit override in `.keel/layout` (slot=path)."""
+    if getattr(a, 'set', None):
+        if '=' not in a.set:
+            sys.exit('usage: docs.py layout --set slot=path   (slot: anchor | decisions | journal)')
+        _ensure(STATE)
+        with open(os.path.join(STATE, 'layout'), 'a') as f:
+            f.write(a.set.strip() + '\n')
+        print(f'layout: recorded override "{a.set.strip()}" → .keel/layout'); return
+    rel = lambda p: os.path.relpath(p, ROOT) if os.path.abspath(p).startswith(ROOT) else p
+    inv = _doc_inventory()
+    print('RESOLVED LAYOUT  (explicit override > autodetect > canonical):')
+    print(f'  anchor    : {rel(ANCHOR)}' + ('' if os.path.exists(ANCHOR) else '   (none found)'))
+    print(f'  decisions : {rel(DEC)}   ({len(_decisions())} ADR)')
+    print(f'  journal   : {rel(JRN)}   ({len(glob.glob(os.path.join(JRN, "*.md")))} entries)')
+    print(f'  docs seen : {len(inv)} total, {sum(1 for t, _ in inv if t == "other")} beyond the known slots')
+
+
+# ---------------- THIN SLICES (dogfood prototypes): run · sink · stance · escalate · ask ----------------
+
+RUNS = os.path.join(STATE, 'runs')
+INBOX = os.path.join(STATE, 'inbox')
+STANCE = os.path.join(STATE, 'stance.json')
+ESCALATIONS = os.path.join(STATE, 'escalations.jsonl')
+ASKS = os.path.join(STATE, 'asks.jsonl')
+
+
+def _run_state(rid):
+    rows = _load_jsonl(os.path.join(RUNS, rid + '.jsonl'))
+    if not rows:
+        return None
+    man = rows[0]
+    items, closed, last_ts = {}, False, man.get('ts', 0)
+    for r in rows[1:]:
+        if r.get('close'):
+            closed = True
+        elif r.get('item'):
+            items[r['item']] = r; last_ts = r.get('ts', last_ts)
+    done = sorted(i for i, r in items.items() if r.get('status') == 'done')
+    failed = sorted(i for i, r in items.items() if r.get('status') == 'failed')
+    skip = sorted(i for i, r in items.items() if r.get('status') == 'skip')
+    universe = man.get('items') or []
+    total = len(universe) or man.get('count') or 0
+    pending = ([i for i in universe if i not in items] if universe
+               else max(0, total - len(done) - len(skip)))
+    return {'man': man, 'done': done, 'failed': failed, 'skip': skip, 'pending': pending,
+            'total': total, 'closed': closed, 'last_ts': last_ts}
+
+
+def _open_runs():
+    out = []
+    for p in sorted(glob.glob(os.path.join(RUNS, '*.jsonl'))):
+        rid = os.path.basename(p)[:-6]
+        s = _run_state(rid)
+        if not s or s['closed']:
+            continue
+        npend = len(s['pending']) if isinstance(s['pending'], list) else s['pending']
+        if npend > 0 or s['failed']:
+            out.append((rid, s))
+    return out
+
+
+def cmd_run(a):
+    _ensure(RUNS)
+    if a.action == 'start':
+        rid = 'r' + _hash((a.label or 'run') + str(time.time()))[:4]
+        items = [x.strip() for x in _read(a.items).splitlines() if x.strip()] if a.items else None
+        man = {'label': a.label or 'run', 'ts': time.time(), 'host': os.uname().nodename}
+        if items:
+            man['items'] = items
+        elif a.count:
+            man['count'] = a.count
+        _append_jsonl(os.path.join(RUNS, rid + '.jsonl'), man)
+        print(f'RUN {rid} "{man["label"]}" — 0/{len(items) if items else a.count or "?"} (append-only ledger: .keel/runs/{rid}.jsonl)')
+    elif a.action == 'mark':
+        if not a.run_id or not a.item:
+            sys.exit('run mark <run-id> <item> [--status done|failed|skip] [--by agent]')
+        _append_jsonl(os.path.join(RUNS, a.run_id + '.jsonl'),
+                      {'item': a.item, 'status': a.status or 'done', 'by': a.by, 'ts': time.time()})
+        print(f'run {a.run_id}: {a.item} → {a.status or "done"}' + (f' (by {a.by})' if a.by else ''))
+    elif a.action in ('status', 'resume', 'close'):
+        if not a.run_id:
+            sys.exit(f'run {a.action} <run-id>')
+        s = _run_state(a.run_id)
+        if not s:
+            sys.exit(f'no run {a.run_id}')
+        npend = len(s['pending']) if isinstance(s['pending'], list) else s['pending']
+        if a.action == 'close':
+            _append_jsonl(os.path.join(RUNS, a.run_id + '.jsonl'), {'close': True, 'ts': time.time()})
+            print(f'run {a.run_id} closed ({len(s["done"])} done, {npend} pending abandoned).'); return
+        if a.action == 'resume':
+            if isinstance(s['pending'], list):
+                for i in s['pending'] + s['failed']:
+                    print(i)
+                print(f'# {len(s["pending"])} pending + {len(s["failed"])} failed to retry — skip-what-is-done is the resume', file=sys.stderr)
+            else:
+                print(f'# item universe unknown (started with --count): {len(s["done"])} done, ~{npend} pending — mark with real ids to enable exact resume', file=sys.stderr)
+            return
+        age = time.time() - s['last_ts']
+        print(f'RUN {a.run_id} "{s["man"].get("label")}"  host={s["man"].get("host")}')
+        print(f'  progress  {len(s["done"])}/{s["total"] or "?"} done · {len(s["failed"])} failed · {npend} pending')
+        print(f'  last mark {int(age // 60)}m{int(age % 60)}s ago' + ('   [STALLED >10m]' if age > 600 else ''))
+        by = defaultdict(int)
+        for r in _load_jsonl(os.path.join(RUNS, a.run_id + '.jsonl'))[1:]:
+            if r.get('item') and r.get('by'):
+                by[r['by']] += 1
+        if by:
+            print('  by-agent  ' + ' · '.join(f'{k}:{v}' for k, v in sorted(by.items())))
+
+
+def cmd_sink(a):
+    _ensure(INBOX)
+    if a.action == 'add':
+        payload = a.data or (a.from_file and _read(a.from_file)) or ''
+        if not payload.strip():
+            sys.exit('sink add: needs --data or --from (the fetched payload)')
+        h = _hash(payload)
+        stream = os.path.join(INBOX, a.stream + '.jsonl')
+        if any(r.get('hash') == h for r in _load_jsonl(stream)):
+            print(f'sink: duplicate (hash {h}) — already buffered, not re-adding.'); return
+        _append_jsonl(stream, {'hash': h, 'target': a.target, 'provenance': a.provenance, 'payload': payload, 'ts': time.time()})
+        n = len(_load_jsonl(stream))
+        print(f'sink: +1 {a.stream} (hash {h}) — {n} buffered durably' + (f' → {a.target}' if a.target else ''))
+    elif a.action == 'status':
+        for p in sorted(glob.glob(os.path.join(INBOX, '*.jsonl'))):
+            stream = os.path.basename(p)[:-6]
+            rows = _load_jsonl(p)
+            rec = set(_read(os.path.join(INBOX, stream + '.reconciled')).split())
+            unrec = [r for r in rows if r.get('hash') not in rec]
+            tgt = rows[-1].get('target') if rows else '?'
+            old = (time.time() - min((r['ts'] for r in unrec), default=time.time())) / 3600
+            print(f'  {stream:12} → {tgt or "?"}   {len(unrec)} buffered · {len(rows) - len(unrec)} reconciled'
+                  + (f' · oldest {old:.1f}h ago' if unrec else ''))
+        if not glob.glob(os.path.join(INBOX, '*.jsonl')):
+            print('  (no capture streams)')
+    elif a.action == 'import':
+        stream = os.path.join(INBOX, a.stream + '.jsonl')
+        recp = os.path.join(INBOX, a.stream + '.reconciled')
+        rec = set(_read(recp).split())
+        rows = _load_jsonl(stream)
+        new = [r for r in rows if r.get('hash') not in rec]
+        merged = 0
+        for r in new:
+            tgt = r.get('target')
+            if not tgt:
+                continue
+            _ensure(os.path.dirname(os.path.join(ROOT, tgt)) or ROOT)
+            with open(os.path.join(ROOT, tgt), 'a', encoding='utf-8') as f:
+                f.write(r['payload'].rstrip('\n') + '\n')
+            rec.add(r['hash']); merged += 1
+        open(recp, 'w').write('\n'.join(sorted(rec)))
+        print(f'sink import {a.stream}: {len(rows)} buffered → {merged} new merged, {len(rows) - len(new)} already present (hash dedup).')
+
+
+def _unreconciled_sink():
+    out = []
+    for p in sorted(glob.glob(os.path.join(INBOX, '*.jsonl'))):
+        stream = os.path.basename(p)[:-6]
+        rec = set(_read(os.path.join(INBOX, stream + '.reconciled')).split())
+        unrec = [r for r in _load_jsonl(p) if r.get('hash') not in rec]
+        if unrec:
+            out.append((stream, len(unrec), unrec[-1].get('target')))
+    return out
+
+
+def _stance():
+    try:
+        return json.load(open(STANCE))
+    except (OSError, ValueError):
+        return None
+
+
+def cmd_stance(a):
+    if a.action == 'clear':
+        try:
+            os.remove(STANCE)
+        except OSError:
+            pass
+        print('stance cleared — normal operation.')
+        return
+    if a.action == 'show' or not a.name:
+        s = _stance()
+        print(json.dumps(s, indent=2) if s else '(no standing stance)')
+        return
+    _ensure(STATE); _ensure_keel_ignored()
+    s = {'name': a.name, 'freeze': a.name == 'freeze' or bool(a.freeze),
+         'blocks_lightweight': a.name == 'freeze' or bool(a.freeze),
+         'memory': a.memory or 'silent', 'note': a.note or '', 'ts': time.time(), 'rehydrates_since': 0}
+    json.dump(s, open(STANCE, 'w'))
+    print(f'STANDING STANCE set: {a.name}' + (' — FREEZE: no builds/edits/ops until `stance clear`' if s['freeze'] else '')
+          + (' — memory writes require confirmation (auto-draft)' if s['memory'] == 'confirm' else ''))
+
+
+def cmd_escalate(a):
+    if a.action == 'raise':
+        rows = _load_jsonl(ESCALATIONS)
+        eid = max((r.get('id', 0) for r in rows), default=0) + 1
+        _append_jsonl(ESCALATIONS, {'id': eid, 'question': a.question, 'domain': a.domain,
+                                    'because': a.because or 'pivotal', 'options': a.options,
+                                    'recommend': a.recommend, 'status': 'open', 'ts': time.time()})
+        print(f'ESCALATION #{eid} — BLOCKED ON USER ({a.because or "pivotal"}). This thread will NOT proceed until resolved.')
+        print(f'  Q: {a.question}' + (f'\n  options: {a.options}  (recommend: {a.recommend})' if a.options else ''))
+    elif a.action == 'list':
+        for r in _load_jsonl(ESCALATIONS):
+            if r.get('status') == 'open':
+                print(f'  #{r["id"]} [{r.get("because")}] {r.get("question", "")[:90]}')
+    elif a.action in ('resolve', 'retract'):
+        rows = _load_jsonl(ESCALATIONS)
+        tgt = next((r for r in rows if r.get('id') == a.id and r.get('status') == 'open'), None)
+        if not tgt:
+            sys.exit(f'no open escalation #{a.id}')
+        tgt['status'] = 'retracted' if a.action == 'retract' else 'resolved'
+        tgt['choice'] = a.choice
+        with open(ESCALATIONS, 'w') as f:
+            for r in rows:
+                f.write(json.dumps(r) + '\n')
+        if a.action == 'resolve' and a.to_decision:
+            n = _next_adr()
+            body = f'## Context\nEscalation #{a.id}: {tgt.get("question")}\n\n## Decision\n{a.choice}\n\n## Rejected\n{tgt.get("options") or "(other options)"}\n'
+            _emit_record('decision', f'{n:04d}-{_slug(a.to_decision)}.md', f'# {n:04d} — {a.to_decision}\n\n{body}\n',
+                         DEC, False, a.to_decision, {'n': n})
+        print(f'escalation #{a.id} {tgt["status"]}' + (f' → choice: {a.choice}' if a.choice else ''))
+
+
+def cmd_ask(a):
+    if a.action == 'add':
+        rows = _load_jsonl(ASKS)
+        aid = max((r.get('id', 0) for r in rows), default=0) + 1
+        _append_jsonl(ASKS, {'id': aid, 'text': a.text, 'status': 'open', 'raised': 1, 'ts': time.time()})
+        print(f'ask #{aid} recorded — stays open until VERIFIABLY resolved (close needs --evidence).')
+    elif a.action == 'bump':
+        rows = _load_jsonl(ASKS)
+        tgt = next((r for r in rows if r.get('id') == a.id), None)
+        if not tgt:
+            sys.exit(f'no ask #{a.id}')
+        tgt['raised'] = tgt.get('raised', 1) + 1
+        with open(ASKS, 'w') as f:
+            for r in rows:
+                f.write(json.dumps(r) + '\n')
+        print(f'ask #{a.id} raised {tgt["raised"]}x now — recurring asks are a loud signal.')
+    elif a.action == 'list':
+        for r in _load_jsonl(ASKS):
+            if r.get('status') == 'open' or a.all:
+                print(f'  #{r["id"]} [{r.get("status")}] raised {r.get("raised", 1)}x: {r.get("text", "")[:90]}')
+    elif a.action == 'close':
+        if not a.evidence:
+            sys.exit('[!] ask close REJECTED — no --evidence. "resolved" without proof is a claim, not a fact. (exit 1)')
+        rows = _load_jsonl(ASKS)
+        tgt = next((r for r in rows if r.get('id') == a.id and r.get('status') == 'open'), None)
+        if not tgt:
+            sys.exit(f'no open ask #{a.id}')
+        tgt['status'] = 'closed'; tgt['evidence'] = a.evidence
+        with open(ASKS, 'w') as f:
+            for r in rows:
+                f.write(json.dumps(r) + '\n')
+        warn = '' if os.path.exists(os.path.join(ROOT, a.evidence)) else '   [!] evidence path not found on disk'
+        print(f'ask #{a.id} closed → evidence: {a.evidence}{warn}')
+
+
 def main():
     ap = argparse.ArgumentParser(prog='docs.py', description='keel memory + enforcement CLI')
     sub = ap.add_subparsers(dest='cmd', required=True)
@@ -649,6 +1073,26 @@ def main():
     p = sub.add_parser('verify'); p.add_argument('action', choices=['init', 'run', 'done', 'sync']); p.set_defaults(fn=cmd_verify)
     sub.add_parser('hygiene').set_defaults(fn=cmd_hygiene)
     p = sub.add_parser('clarify-depth'); p.add_argument('level', nargs='?', choices=['thorough', 'light']); p.set_defaults(fn=cmd_clarify)
+    p = sub.add_parser('feedback'); p.add_argument('--note'); p.add_argument('--severity', choices=['low', 'med', 'high']); p.add_argument('--ref'); p.set_defaults(fn=cmd_feedback)
+    p = sub.add_parser('layout'); p.add_argument('--set'); p.add_argument('--detect', action='store_true'); p.set_defaults(fn=cmd_layout)
+    p = sub.add_parser('run'); p.add_argument('action', choices=['start', 'mark', 'status', 'resume', 'close'])
+    p.add_argument('run_id', nargs='?'); p.add_argument('item', nargs='?'); p.add_argument('--label')
+    p.add_argument('--items'); p.add_argument('--count', type=int); p.add_argument('--status', choices=['done', 'failed', 'skip'])
+    p.add_argument('--by'); p.set_defaults(fn=cmd_run)
+    p = sub.add_parser('sink'); p.add_argument('action', choices=['add', 'status', 'import'])
+    p.add_argument('--stream', default='default'); p.add_argument('--target'); p.add_argument('--provenance')
+    p.add_argument('--data'); p.add_argument('--from', dest='from_file'); p.set_defaults(fn=cmd_sink)
+    p = sub.add_parser('stance'); p.add_argument('action', choices=['set', 'clear', 'show'])
+    p.add_argument('name', nargs='?'); p.add_argument('--freeze', action='store_true')
+    p.add_argument('--memory', choices=['confirm', 'silent']); p.add_argument('--note'); p.set_defaults(fn=cmd_stance)
+    p = sub.add_parser('escalate'); p.add_argument('action', choices=['raise', 'list', 'resolve', 'retract'])
+    p.add_argument('id', nargs='?', type=int); p.add_argument('--question'); p.add_argument('--domain')
+    p.add_argument('--because', choices=['pivotal', 'irreversible', 'cost']); p.add_argument('--options')
+    p.add_argument('--recommend'); p.add_argument('--choice'); p.add_argument('--to-decision', dest='to_decision')
+    p.set_defaults(fn=cmd_escalate)
+    p = sub.add_parser('ask'); p.add_argument('action', choices=['add', 'list', 'close', 'bump'])
+    p.add_argument('id', nargs='?', type=int); p.add_argument('--text'); p.add_argument('--evidence')
+    p.add_argument('--all', action='store_true'); p.set_defaults(fn=cmd_ask)
     p = sub.add_parser('claim'); p.add_argument('resource'); p.add_argument('--by'); p.add_argument('--release', action='store_true'); p.set_defaults(fn=cmd_claim)
     p = sub.add_parser('whiteboard'); p.add_argument('action', choices=['post', 'read']); p.add_argument('message', nargs='?', default=''); p.add_argument('--by'); p.set_defaults(fn=cmd_whiteboard)
     p = sub.add_parser('search'); p.add_argument('term'); p.set_defaults(fn=cmd_search)
