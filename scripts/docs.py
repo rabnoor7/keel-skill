@@ -543,6 +543,26 @@ def cmd_rehydrate(a):
         print(f'\n[!] CAPTURE INBOX — {n} record(s) in "{stream}" captured but not merged into {tgt or "target"}:')
         print(f'    → fetched data at risk of disposal. Reconcile: docs.py sink import --stream {stream}')
 
+    if os.path.exists(LIVETEST) and json.load(open(LIVETEST)).get('state') == 'handed_off':
+        advisory.append(('livetest HANDED OFF — awaiting the user\'s live verdict', 'docs.py livetest confirm|reject --note "..."'))
+        print('\n[!] LIVETEST — handed off to the user; `verify done` stays blocked until their verdict.')
+
+    subs = _substrate_issues()
+    if subs:
+        advisory.append((f'{len(subs)} external substrate issue(s)', 'docs.py substrate sync <label> after re-reading it'))
+        print('\n[!] SUBSTRATES — declared external anchors of truth need attention:')
+        for lbl, msg in subs[:4]:
+            print(f'    {lbl}: {msg}')
+
+    coord = _coord_dir()
+    if coord and os.path.exists(os.path.join(coord, 'handoffs.jsonl')):
+        oh = [r for r in _load_jsonl(os.path.join(coord, 'handoffs.jsonl')) if r.get('status') == 'open']
+        if oh:
+            advisory.append((f'{len(oh)} open cross-worktree handoff(s)', 'docs.py handoff list'))
+            print(f'\n[!] HANDOFFS — {len(oh)} open across this repo\'s worktrees:')
+            for r_ in oh[:4]:
+                print(f'    #{r_["id"]} → {r_["to"]}: {r_.get("title", "")[:70]} (from {r_.get("from_worktree")})')
+
     open_asks = [r for r in _load_asks() if r['status'] == 'open']
     hot_asks = [r for r in open_asks if r['raised'] >= 3]
     if hot_asks:
@@ -767,6 +787,37 @@ def cmd_verify(a):
         if not os.path.exists(ap):
             open(ap, 'w').write(AUDIT_TMPL)
         print(f'verify init: {os.path.relpath(ap, ROOT)} — fill in field-level + provenance + regression checks.')
+    elif a.action == 'batch':
+        if not a.cmd or not a.every:
+            sys.exit('verify batch --cmd "<small per-batch audit>" --every N   (circuit breaker for long runs)')
+        json.dump({'cmd': a.cmd, 'every': a.every}, open(BATCH_CFG, 'w'))
+        print(f'verify batch: every {a.every} run-marks → `{a.cmd}`; a failure HALTS the run (circuit breaker).')
+    elif a.action == 'provenance':
+        if not a.file or not a.require:
+            sys.exit('verify provenance <file.csv> --require col1,col2 [--fresh-days N]')
+        import csv as _csv
+        rows = list(_csv.DictReader(open(os.path.join(ROOT, a.file), encoding='utf-8')))
+        req = [c.strip() for c in a.require.split(',')]
+        datecol = next((c for c in req if 'date' in c.lower() or c.lower().endswith('_at')), None)
+        missing, stale = [], []
+        for i, row in enumerate(rows, 2):
+            if any(not (row.get(c) or '').strip() for c in req):
+                missing.append(i)
+            elif a.fresh_days and datecol:
+                try:
+                    dt = datetime.datetime.fromisoformat((row.get(datecol) or '').strip()[:19])
+                    if (datetime.datetime.now() - dt).days > a.fresh_days:
+                        stale.append(i)
+                except ValueError:
+                    stale.append(i)
+        if missing or stale:
+            print(f'[!!] PROVENANCE — {a.file}: {len(missing)} row(s) missing {req}'
+                  + (f', {len(stale)} stale/unparseable (>{a.fresh_days}d)' if a.fresh_days else '')
+                  + f'   e.g. rows {(missing + stale)[:6]}')
+            print('    a datum without source + timestamp is a claim, not a fact — untrusted until it carries both. (exit 1)')
+            sys.exit(1)
+        print(f'verify provenance: ✅ {len(rows)} row(s) — all carry {req}'
+              + (f', all fresh ≤{a.fresh_days}d' if a.fresh_days else '') + '.')
     elif a.action == 'run':
         if not os.path.exists(ap):
             sys.exit('no audit — run: verify init')
@@ -783,6 +834,9 @@ def cmd_verify(a):
             print('verify done: ✗ last verify FAILED — fix + re-run.'); sys.exit(1)
         if s.get('deliverables') != _deliverable_hash():
             print('verify done: ✗ deliverable CHANGED since the last passing verify — re-run `verify run`.'); sys.exit(1)
+        if os.path.exists(LIVETEST) and json.load(open(LIVETEST)).get('state') == 'handed_off':
+            print('verify done: ✗ HANDED OFF for the user\'s live test — self-certification is banned; '
+                  'await `livetest confirm` or `livetest reject`.'); sys.exit(1)
         print('verify done: ✅ a fresh passing audit covers the current deliverable.')
     elif a.action == 'sync':
         gated = set(re.findall(r'''["']([a-z][a-z0-9_]{2,})["']''', _read(ap)))
@@ -978,10 +1032,14 @@ def _run_state(rid):
     if not rows:
         return None
     man = rows[0]
-    items, closed, last_ts = {}, False, man.get('ts', 0)
+    items, closed, halted, last_ts = {}, False, False, man.get('ts', 0)
     for r in rows[1:]:
         if r.get('close'):
             closed = True
+        elif r.get('halt'):
+            halted = True
+        elif r.get('halt_cleared'):
+            halted = False
         elif r.get('item'):
             items[r['item']] = r; last_ts = r.get('ts', last_ts)
     done = sorted(i for i, r in items.items() if r.get('status') == 'done')
@@ -992,7 +1050,7 @@ def _run_state(rid):
     pending = ([i for i in universe if i not in items] if universe
                else max(0, total - len(done) - len(skip)))
     return {'man': man, 'done': done, 'failed': failed, 'skip': skip, 'pending': pending,
-            'total': total, 'closed': closed, 'last_ts': last_ts}
+            'total': total, 'closed': closed, 'halted': halted, 'last_ts': last_ts}
 
 
 def _open_runs():
@@ -1038,6 +1096,18 @@ def cmd_run(a):
         _append_jsonl(os.path.join(RUNS, a.run_id + '.jsonl'),
                       {'item': a.item, 'status': a.status or 'done', 'by': a.by, 'ts': time.time()})
         print(f'run {a.run_id}: {a.item} → {a.status or "done"}' + (f' (by {a.by})' if a.by else ''))
+        if os.path.exists(BATCH_CFG):  # circuit breaker: audit WHILE it runs, halt when it rots
+            cfg = json.load(open(BATCH_CFG))
+            marks = sum(1 for r_ in _load_jsonl(os.path.join(RUNS, a.run_id + '.jsonl'))[1:] if r_.get('item'))
+            if cfg.get('every') and marks % cfg['every'] == 0:
+                print(f'verify batch: {marks} marks — running the per-batch audit…')
+                if os.system(cfg['cmd']) != 0:
+                    _append_jsonl(os.path.join(RUNS, a.run_id + '.jsonl'),
+                                  {'halt': True, 'reason': 'batch audit failed', 'ts': time.time()})
+                    print(f'[!!] CIRCUIT BREAKER — batch audit FAILED at {marks} marks; run {a.run_id} HALTED. '
+                          'Fix the rot, then `run resume ' + a.run_id + ' --clear-halt`. (exit 1)')
+                    sys.exit(1)
+                print('verify batch: ✅ batch clean — continue.')
     elif a.action in ('status', 'resume', 'close'):
         if not a.run_id:
             sys.exit(f'run {a.action} <run-id>')
@@ -1049,6 +1119,13 @@ def cmd_run(a):
             _append_jsonl(os.path.join(RUNS, a.run_id + '.jsonl'), {'close': True, 'ts': time.time()})
             print(f'run {a.run_id} closed ({len(s["done"])} done, {npend} pending abandoned).'); return
         if a.action == 'resume':
+            if s.get('halted'):
+                if getattr(a, 'clear_halt', False):
+                    _append_jsonl(os.path.join(RUNS, a.run_id + '.jsonl'), {'halt_cleared': True, 'ts': time.time()})
+                    print('# halt cleared — resuming.', file=sys.stderr)
+                else:
+                    sys.exit(f'run {a.run_id} is HALTED (batch audit failed mid-run). Fix the rot first, '
+                             f'then: run resume {a.run_id} --clear-halt')
             if isinstance(s['pending'], list):
                 for i in s['pending'] + s['failed']:
                     print(i)
@@ -1247,6 +1324,161 @@ def _save_asks(rows):
     open(ASKS_MD, 'w').write(hdr + '\n'.join(
         f'- [{r["status"]}] #{r["id"]} (raised {r["raised"]}x) {r["text"]}'
         + (f' — evidence: {r["evidence"]}' if r.get('evidence') else '') for r in rows) + '\n')
+
+
+# ---------------- THIN SLICES round 4 (tranche B): batch · coverage · livetest · substrate · handoff · provenance ----------------
+
+BATCH_CFG = os.path.join(STATE, 'verify', 'batch.json')
+COVERAGE_DIR = os.path.join(STATE, 'coverage')
+LIVETEST = os.path.join(STATE, 'livetest.json')
+SUBSTRATES = os.path.join(STATE, 'substrates.jsonl')
+
+
+def _coord_dir():
+    """Cross-worktree coordination home: the git common dir is the ONE path every linked worktree shares."""
+    import subprocess
+    r = subprocess.run(['git', 'rev-parse', '--git-common-dir'], cwd=ROOT, capture_output=True, text=True)
+    if r.returncode != 0:
+        return None
+    d = r.stdout.strip()
+    return os.path.join(d if os.path.isabs(d) else os.path.join(ROOT, d), 'keel-coord')
+
+
+def _cov_units(text):
+    """Ground-truth units of an external source: numbered/bulleted points; fall back to substantial lines."""
+    units = [re.sub(r'^[\s\-*\d.)]+', '', l).strip() for l in text.splitlines()
+             if re.match(r'\s*(?:[-*]|\d+[.)])\s+\S', l)]
+    if not units:
+        units = [l.strip() for l in text.splitlines() if len(l.split()) >= 6]
+    return [u for u in units if len(u.split()) >= 3]
+
+
+_STOP = {'the', 'and', 'for', 'with', 'that', 'this', 'from', 'into', 'are', 'was', 'were', 'have', 'has',
+         'will', 'should', 'would', 'could', 'about', 'their', 'they', 'them', 'your', 'our'}
+
+
+def cmd_coverage(a):
+    _ensure(COVERAGE_DIR)
+    sp = os.path.join(COVERAGE_DIR, _slug(a.source) + '.json')
+    if a.action == 'init':
+        units = _cov_units(_read(a.source))
+        if not units:
+            sys.exit(f'coverage init: no extractable points in {a.source}')
+        json.dump({'source': a.source, 'units': units, 'ts': time.time()}, open(sp, 'w'))
+        print(f'coverage: {len(units)} ground-truth point(s) extracted from {a.source} — each must be addressed.')
+    elif a.action == 'check':
+        if not a.against:
+            sys.exit('coverage check <source> --against <output-file>')
+        if not os.path.exists(sp):
+            sys.exit(f'no coverage set for {a.source} — run coverage init first')
+        units = json.load(open(sp))['units']
+        out_words = set(re.findall(r'[a-z0-9]{4,}', _read(a.against).lower())) - _STOP
+        missed = []
+        for u in units:
+            uw = set(re.findall(r'[a-z0-9]{4,}', u.lower())) - _STOP
+            if len(uw & out_words) < min(2, len(uw)):
+                missed.append(u)
+        if missed:
+            print(f'[!!] COVERAGE FAIL — {len(missed)}/{len(units)} source point(s) NOT addressed in {a.against}:')
+            for u in missed[:8]:
+                print(f'    - {u[:90]}')
+            print('    (keyword-level check — it proves absence of coverage, not quality of it) (exit 1)')
+            sys.exit(1)
+        print(f'coverage: ✅ all {len(units)} point(s) from {a.source} are addressed in {a.against}.')
+
+
+def cmd_livetest(a):
+    if a.action == 'arm':
+        _ensure(STATE); _ensure_keel_ignored()
+        json.dump({'state': 'handed_off', 'note': a.note or '', 'ts': time.time()}, open(LIVETEST, 'w'))
+        print('livetest: HANDED OFF to the user for a live real-world test. '
+              '`verify done` is BLOCKED until the user\'s verdict (self-certification banned).'
+              + (f'\n  → {a.note}' if a.note else ''))
+    elif a.action in ('confirm', 'reject'):
+        if not os.path.exists(LIVETEST):
+            sys.exit('livetest: nothing armed')
+        st = json.load(open(LIVETEST))
+        st.update({'state': 'confirmed' if a.action == 'confirm' else 'rejected',
+                   'verdict_note': a.note or '', 'verdict_ts': time.time()})
+        json.dump(st, open(LIVETEST, 'w'))
+        print(f'livetest: {st["state"].upper()} by the user'
+              + (f' — "{a.note}"' if a.note else '')
+              + ('. done is unblocked.' if a.action == 'confirm' else '. back to work; re-arm after fixes.'))
+    elif a.action == 'status':
+        print(json.dumps(json.load(open(LIVETEST)), indent=2) if os.path.exists(LIVETEST) else '(no livetest state)')
+
+
+def cmd_substrate(a):
+    if a.action == 'add':
+        p = os.path.abspath(os.path.expanduser(a.path))
+        if not os.path.isfile(p):
+            sys.exit(f'substrate add: {a.path} is not a file')
+        _append_jsonl(SUBSTRATES, {'label': a.label or os.path.basename(p), 'path': p,
+                                   'hash': _hash(_read(p)), 'ts': time.time()})
+        print(f'substrate: "{a.label or os.path.basename(p)}" registered as an external anchor of truth — '
+              'rehydrate will flag drift and sync debt.')
+    elif a.action == 'sync':
+        rows = _load_jsonl(SUBSTRATES)
+        tgt = next((r for r in rows if r.get('label') == a.path), None)  # positional doubles as the label here
+        if not tgt:
+            sys.exit(f'no substrate "{a.path}"')
+        tgt['hash'] = _hash(_read(tgt['path'])); tgt['ts'] = time.time()
+        with open(SUBSTRATES, 'w') as f:
+            for r in rows:
+                f.write(json.dumps(r) + '\n')
+        print(f'substrate: "{a.path}" re-read and marked in sync.')
+    elif a.action == 'list':
+        for r in _load_jsonl(SUBSTRATES):
+            print(f'  {r["label"]}: {r["path"]}')
+
+
+def _substrate_issues():
+    out = []
+    for r in _load_jsonl(SUBSTRATES):
+        if not os.path.exists(r['path']):
+            out.append((r['label'], 'MISSING — external anchor file is gone'))
+        elif _hash(_read(r['path'])) != r.get('hash'):
+            out.append((r['label'], 'DRIFTED — changed since last sync; re-read it (`substrate sync <label>`)'))
+        else:
+            newest_dec = max((_mtime(p) for p in _decisions()), default=0)
+            if newest_dec > r.get('ts', 0):
+                out.append((r['label'], 'SYNC DEBT — decisions landed after last sync; the external anchor may be behind'))
+    return out
+
+
+def cmd_handoff(a):
+    coord = _coord_dir()
+    if not coord:
+        sys.exit('handoff: not a git repo — the cross-worktree channel lives in the git common dir')
+    hf = os.path.join(coord, 'handoffs.jsonl')
+    if a.action == 'send':
+        if not (a.to and a.title):
+            sys.exit('handoff send --to <role> --title "..." [--body "..."] [--from <file>]')
+        import subprocess
+        sha = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'], cwd=ROOT,
+                             capture_output=True, text=True).stdout.strip()
+        rows = _load_jsonl(hf)
+        hid = max((r.get('id', 0) for r in rows), default=0) + 1
+        _append_jsonl(hf, {'id': hid, 'to': a.to, 'title': a.title,
+                           'body': a.body or (a.from_file and _read(a.from_file)) or '',
+                           'from_worktree': os.path.basename(ROOT), 'sha': sha, 'status': 'open', 'ts': time.time()})
+        print(f'handoff #{hid} → {a.to}  (from worktree "{os.path.basename(ROOT)}" @ {sha}) — visible from EVERY worktree of this repo.')
+    elif a.action == 'list':
+        rows = [r for r in _load_jsonl(hf) if a.all or r.get('status') == 'open']
+        if not rows:
+            print('(no open handoffs)'); return
+        for r in rows:
+            print(f'  #{r["id"]} [{r["status"]}] → {r["to"]}: {r["title"][:70]}  (from {r.get("from_worktree")} @ {r.get("sha")})')
+    elif a.action == 'ack':
+        rows = _load_jsonl(hf)
+        tgt = next((r for r in rows if r.get('id') == a.id and r.get('status') == 'open'), None)
+        if not tgt:
+            sys.exit(f'no open handoff #{a.id}')
+        tgt['status'] = 'acked'
+        with open(hf, 'w') as f:
+            for r in rows:
+                f.write(json.dumps(r) + '\n')
+        print(f'handoff #{a.id} acked.')
 
 
 # ---------------- THIN SLICES round 3: accept · route · budget · critique ----------------
@@ -1584,7 +1816,18 @@ def main():
     p = sub.add_parser('contract'); p.add_argument('action', choices=['set', 'approve', 'check'])
     p.add_argument('--content'); p.add_argument('--from', dest='from_file'); p.add_argument('--approved', action='store_true')
     p.add_argument('--window', type=int); p.set_defaults(fn=cmd_contract)
-    p = sub.add_parser('verify'); p.add_argument('action', choices=['init', 'run', 'done', 'sync']); p.set_defaults(fn=cmd_verify)
+    p = sub.add_parser('verify'); p.add_argument('action', choices=['init', 'run', 'done', 'sync', 'batch', 'provenance'])
+    p.add_argument('file', nargs='?'); p.add_argument('--cmd'); p.add_argument('--every', type=int)
+    p.add_argument('--require'); p.add_argument('--fresh-days', dest='fresh_days', type=int); p.set_defaults(fn=cmd_verify)
+    p = sub.add_parser('coverage'); p.add_argument('action', choices=['init', 'check']); p.add_argument('source')
+    p.add_argument('--against'); p.set_defaults(fn=cmd_coverage)
+    p = sub.add_parser('livetest'); p.add_argument('action', choices=['arm', 'confirm', 'reject', 'status'])
+    p.add_argument('--note'); p.set_defaults(fn=cmd_livetest)
+    p = sub.add_parser('substrate'); p.add_argument('action', choices=['add', 'sync', 'list'])
+    p.add_argument('path', nargs='?'); p.add_argument('--label'); p.set_defaults(fn=cmd_substrate)
+    p = sub.add_parser('handoff'); p.add_argument('action', choices=['send', 'list', 'ack'])
+    p.add_argument('id', nargs='?', type=int); p.add_argument('--to'); p.add_argument('--title'); p.add_argument('--body')
+    p.add_argument('--from', dest='from_file'); p.add_argument('--all', action='store_true'); p.set_defaults(fn=cmd_handoff)
     p = sub.add_parser('preserve'); p.add_argument('action', choices=['snapshot', 'check']); p.add_argument('file'); p.set_defaults(fn=cmd_preserve)
     sub.add_parser('orphans').set_defaults(fn=cmd_orphans)
     p = sub.add_parser('smoke'); p.add_argument('action', choices=['set', 'run', 'gate']); p.add_argument('--cmd'); p.set_defaults(fn=cmd_smoke)
@@ -1595,7 +1838,7 @@ def main():
     p = sub.add_parser('run'); p.add_argument('action', choices=['start', 'mark', 'status', 'resume', 'close'])
     p.add_argument('run_id', nargs='?'); p.add_argument('item', nargs='?'); p.add_argument('--label')
     p.add_argument('--items'); p.add_argument('--count', type=int); p.add_argument('--status', choices=['done', 'failed', 'skip'])
-    p.add_argument('--by'); p.set_defaults(fn=cmd_run)
+    p.add_argument('--by'); p.add_argument('--clear-halt', dest='clear_halt', action='store_true'); p.set_defaults(fn=cmd_run)
     p = sub.add_parser('sink'); p.add_argument('action', choices=['add', 'status', 'import'])
     p.add_argument('--stream', default='default'); p.add_argument('--target'); p.add_argument('--provenance')
     p.add_argument('--data'); p.add_argument('--from', dest='from_file'); p.set_defaults(fn=cmd_sink)
