@@ -770,10 +770,24 @@ def cmd_verify(a):
         if not os.path.exists(ap):
             sys.exit('no audit — run: verify init')
         import subprocess
-        r = subprocess.run([sys.executable, ap])
+        r = subprocess.run([sys.executable, ap], capture_output=True, text=True)
+        sys.stdout.write(r.stdout); sys.stderr.write(r.stderr)
+        # verify remembers: any `METRIC <name> <number>` line the audit prints is stored in the stamp and
+        # compared against the last PASSING run — the general form of "this run is smaller than last time"
+        # (rows, entities, fill-rate, eval score — whatever the audit already measures).
+        metrics = {m.group(1): float(m.group(2))
+                   for m in re.finditer(r'^METRIC\s+(\S+)\s+([\d.]+)\s*$', r.stdout, re.M)}
+        prev = json.load(open(VERIFY_STAMP)) if os.path.exists(VERIFY_STAMP) else {}
+        if prev.get('result') == 'pass':
+            for name, old in (prev.get('metrics') or {}).items():
+                new = metrics.get(name)
+                if new is not None and old and new < 0.9 * old:
+                    print(f'[!] METRIC REGRESSION — {name}: {old:g} → {new:g} ({(new - old) / old:+.0%}) vs the '
+                          'last passing run. Smaller than last time usually means silent under-capture.')
         json.dump({'result': 'pass' if r.returncode == 0 else 'fail', 'ts': time.time(),
-                   'deliverables': _deliverable_hash()}, open(VERIFY_STAMP, 'w'))
-        print(f'verify run: exit {r.returncode} (stamped)'); sys.exit(r.returncode)
+                   'deliverables': _deliverable_hash(), 'metrics': metrics}, open(VERIFY_STAMP, 'w'))
+        print(f'verify run: exit {r.returncode} (stamped'
+              + (f', {len(metrics)} metric(s) remembered' if metrics else '') + ')'); sys.exit(r.returncode)
     elif a.action == 'done':
         if not os.path.exists(VERIFY_STAMP):
             print('verify done: ✗ never verified — run `verify run` before claiming done.'); sys.exit(1)
@@ -1248,6 +1262,164 @@ def _save_asks(rows):
         + (f' — evidence: {r["evidence"]}' if r.get('evidence') else '') for r in rows) + '\n')
 
 
+# ---------------- THIN SLICES round 3: accept · route · budget · critique ----------------
+
+ACCEPT_DIR = os.path.join(DOCS, 'acceptance')
+ROUTING = os.path.join(DOCS, 'routing.md')
+SESSION_MODEL = os.path.join(STATE, 'session_model')
+BUDGET = os.path.join(STATE, 'budget.jsonl')
+BUDGET_CAP = os.path.join(STATE, 'budget_cap')
+CRITIQUE = os.path.join(STATE, 'critique.jsonl')
+
+
+def cmd_accept(a):
+    """Typed acceptance registry — the durable per-deliverable-TYPE definition-of-done, learned from real
+    corrections (committed + hand-editable), so the quality bar stops living only in the user's head."""
+    _ensure(ACCEPT_DIR)
+    p = os.path.join(ACCEPT_DIR, _slug(a.type) + '.md')
+    if a.action == 'add':
+        if not a.criterion:
+            sys.exit('accept add <type> --criterion "..."')
+        first = not os.path.exists(p)
+        with open(p, 'a', encoding='utf-8') as f:
+            if first:
+                f.write(f'# Acceptance — {a.type}\n\nDefinition-of-done for every "{a.type}" deliverable; '
+                        'grown from real corrections. Hand-editable; one criterion per line.\n\n')
+            f.write(f'- [ ] {a.criterion}\n')
+        print(f'accept: criterion added → {os.path.relpath(p, ROOT)}')
+    elif a.action == 'show':
+        print(_read(p) or f'(no acceptance registry for "{a.type}" — accept add {a.type} --criterion "...")')
+    elif a.action == 'check':
+        crits = re.findall(r'^- \[.\] (.+)$', _read(p), re.M)
+        if not crits:
+            print(f'accept check: ✗ NO registry for type "{a.type}" — done cannot be claimed against an '
+                  f'empty bar. Record the bar first: accept add {a.type} --criterion "..." (exit 1)')
+            sys.exit(1)
+        print(f'ACCEPT CHECK — "{a.type}" ({len(crits)} criteria, {os.path.relpath(p, ROOT)}). '
+              'Walk EVERY line against the actual deliverable before claiming done:')
+        for c in crits:
+            print(f'   □ {c}')
+
+
+def cmd_route(a):
+    if a.action == 'set':
+        if not (a.klass and a.keywords and a.model):
+            sys.exit('route set <class> --keywords "kw|kw|kw" --model <name>')
+        _ensure(DOCS)
+        first = not os.path.exists(ROUTING)
+        with open(ROUTING, 'a', encoding='utf-8') as f:
+            if first:
+                f.write('# Routing policy — task-class → model (codified once, never re-typed per session)\n\n')
+            f.write(f'- {a.klass}: {a.keywords} -> {a.model}\n')
+        print(f'route: {a.klass} ({a.keywords}) → {a.model}   [docs/routing.md]')
+    elif a.action == 'model':
+        if not a.model:
+            sys.exit('route model --model <name>  (declare what THIS session is running as)')
+        _ensure(STATE); _ensure_keel_ignored()
+        open(SESSION_MODEL, 'w').write(a.model)
+        print(f'session model: {a.model}')
+    elif a.action == 'check':
+        rules = re.findall(r'^- (\w[\w-]*): (.+?) -> (\S+)$', _read(ROUTING), re.M)
+        if not rules:
+            print('route check: no routing policy recorded (docs/routing.md) — nothing to enforce.'); return
+        sess = _read(SESSION_MODEL).strip()
+        plan = (json.load(open(CONTRACT)).get('plan', '') if os.path.exists(CONTRACT) else '')
+        if not sess or not plan:
+            sys.exit('route check: needs a declared session model (`route model --model X`) and a set contract.')
+        flags = []
+        for line in plan.splitlines():
+            low = line.strip().lower()
+            for klass, kws, model in rules:
+                if low and re.search(kws, low) and model.lower() != sess.lower():
+                    flags.append((line.strip()[:64], klass, model))
+        if flags:
+            print(f'ROUTE CHECK — session model "{sess}" vs policy (docs/routing.md):')
+            for item, klass, model in flags[:8]:
+                print(f'   ✗ "{item}"  is {klass}-class → belongs on {model} (delegate or justify)')
+            print(f'{len(flags)} item(s) mis-routed. Honest limit: keel cannot switch the model — it detects '
+                  'and surfaces; delegate the flagged items to the right tier. (exit 1)')
+            sys.exit(1)
+        print(f'route check: ✅ every contract item matches the policy for "{sess}".')
+
+
+def cmd_budget(a):
+    if a.action == 'cap':
+        _ensure(STATE); _ensure_keel_ignored()
+        open(BUDGET_CAP, 'w').write(str(a.usd))
+        print(f'budget cap: ${a.usd:g} (persists across sessions)')
+    elif a.action == 'estimate':
+        if not os.path.exists(CONTRACT):
+            sys.exit('budget estimate: no contract set — the estimate binds to a specific plan')
+        c = json.load(open(CONTRACT))
+        _append_jsonl(BUDGET, {'kind': 'estimate', 'usd': a.usd, 'contract': c.get('hash'),
+                               'basis': a.basis or '', 'ts': time.time()})
+        print(f'budget estimate: ${a.usd:g} bound to contract {c.get("hash")}'
+              + (f' — basis: {a.basis}' if a.basis else ''))
+    elif a.action == 'record':
+        _append_jsonl(BUDGET, {'kind': 'actual', 'usd': a.usd, 'item': a.item or '', 'ts': time.time()})
+        print(f'budget record: ${a.usd:g}' + (f' — {a.item}' if a.item else ''))
+    elif a.action == 'check':
+        cap = float(_read(BUDGET_CAP).strip() or 0)
+        if not cap:
+            print('budget check: no cap set (`budget cap --usd N`) — nothing to enforce.'); return
+        spent = sum(r.get('usd', 0) for r in _load_jsonl(BUDGET) if r.get('kind') == 'actual')
+        rem = cap - spent
+        print(f'CAP ${cap:g} · SPENT ${spent:g} · REMAINING ${rem:g} ({max(0, rem / cap):.0%} of cap)')
+        if rem <= 0.25 * cap:
+            print('[!] CONSERVE MODE — targeted extracts over full re-runs; ask before any fan-out. (exit 1)')
+            sys.exit(1)
+        print('budget check: ✅ within budget.')
+
+
+def cmd_critique(a):
+    """The proposal-audit gate — verify's symmetric bookend, applied to the PLAN. Structural checks only
+    (untested load-bearing assumptions, research grounding, rejected alternatives) — honesty about what a
+    deterministic gate can and cannot judge."""
+    chash = json.load(open(CONTRACT)).get('hash') if os.path.exists(CONTRACT) else None
+    if a.action == 'assume':
+        if not a.claim:
+            sys.exit('critique assume --claim "..." [--bearing load|minor] [--status untested|tested|user-confirmed]')
+        _append_jsonl(CRITIQUE, {'kind': 'assume', 'claim': a.claim, 'bearing': a.bearing or 'minor',
+                                 'status': a.status or 'untested', 'contract': chash, 'ts': time.time()})
+        print(f'critique: assumption logged ({a.bearing or "minor"}, {a.status or "untested"})')
+    elif a.action == 'research':
+        if not (a.angle and a.finding):
+            sys.exit('critique research --angle "..." --finding "..." [--source <pointer>] [--gap "..."]')
+        _append_jsonl(CRITIQUE, {'kind': 'research', 'angle': a.angle, 'finding': a.finding,
+                                 'source': a.source or '', 'gap': a.gap or '', 'contract': chash, 'ts': time.time()})
+        print('critique: research angle logged' + (' (gap surfaced)' if a.gap else ''))
+    elif a.action == 'alt':
+        if not (a.option and a.because):
+            sys.exit('critique alt --option "..." --because "why rejected"')
+        _append_jsonl(CRITIQUE, {'kind': 'alt', 'option': a.option, 'because': a.because,
+                                 'contract': chash, 'ts': time.time()})
+        print('critique: rejected alternative logged')
+    elif a.action == 'check':
+        rows = [r for r in _load_jsonl(CRITIQUE) if r.get('contract') == chash]
+        if not chash:
+            sys.exit('critique check: no contract set — the critique binds to a specific plan')
+        untested = [r for r in rows if r.get('kind') == 'assume' and r.get('bearing') == 'load'
+                    and r.get('status') == 'untested']
+        research = [r for r in rows if r.get('kind') == 'research']
+        alts = [r for r in rows if r.get('kind') == 'alt']
+        fails = []
+        if untested:
+            fails.append(f'{len(untested)} LOAD-BEARING assumption(s) untested: '
+                         + '; '.join(r['claim'][:48] for r in untested[:3]))
+        if not research:
+            fails.append('no research angles logged — the plan cites nothing gathered')
+        if not alts:
+            fails.append('no rejected alternatives — a plan with no alternatives was not compared to anything')
+        if fails:
+            print(f'CRITIQUE CHECK — contract {chash}: ✗ NOT ready to approve:')
+            for f_ in fails:
+                print(f'   ✗ {f_}')
+            print('(structural gate only — it verifies the plan was stress-tested, not that it is right) (exit 1)')
+            sys.exit(1)
+        print(f'critique check: ✅ contract {chash} — {len(rows)} ledger entries; assumptions tested, '
+              f'{len(research)} research angle(s), {len(alts)} alternative(s) weighed.')
+
+
 # ---------------- THIN SLICES round 2: verify-baseline · preserve · orphans · smoke ----------------
 
 PRESERVE_DIR = os.path.join(STATE, 'preserve')
@@ -1449,6 +1621,16 @@ def main():
     p.add_argument('id', nargs='?', type=int); p.add_argument('--text'); p.add_argument('--evidence')
     p.add_argument('--all', action='store_true'); p.set_defaults(fn=cmd_ask)
     p = sub.add_parser('match'); p.add_argument('query'); p.set_defaults(fn=cmd_match)
+    p = sub.add_parser('accept'); p.add_argument('action', choices=['add', 'show', 'check'])
+    p.add_argument('type'); p.add_argument('--criterion'); p.set_defaults(fn=cmd_accept)
+    p = sub.add_parser('route'); p.add_argument('action', choices=['set', 'model', 'check'])
+    p.add_argument('klass', nargs='?'); p.add_argument('--keywords'); p.add_argument('--model'); p.set_defaults(fn=cmd_route)
+    p = sub.add_parser('budget'); p.add_argument('action', choices=['cap', 'estimate', 'record', 'check'])
+    p.add_argument('--usd', type=float); p.add_argument('--item'); p.add_argument('--basis'); p.set_defaults(fn=cmd_budget)
+    p = sub.add_parser('critique'); p.add_argument('action', choices=['assume', 'research', 'alt', 'check'])
+    p.add_argument('--claim'); p.add_argument('--bearing', choices=['load', 'minor']); p.add_argument('--status', choices=['untested', 'tested', 'user-confirmed'])
+    p.add_argument('--angle'); p.add_argument('--finding'); p.add_argument('--source'); p.add_argument('--gap')
+    p.add_argument('--option'); p.add_argument('--because'); p.set_defaults(fn=cmd_critique)
     p = sub.add_parser('claim'); p.add_argument('resource'); p.add_argument('--by'); p.add_argument('--release', action='store_true'); p.set_defaults(fn=cmd_claim)
     p = sub.add_parser('whiteboard'); p.add_argument('action', choices=['post', 'read']); p.add_argument('message', nargs='?', default=''); p.add_argument('--by'); p.set_defaults(fn=cmd_whiteboard)
     p = sub.add_parser('search'); p.add_argument('term'); p.set_defaults(fn=cmd_search)
