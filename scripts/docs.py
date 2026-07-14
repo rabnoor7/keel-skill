@@ -499,17 +499,16 @@ def cmd_rehydrate(a):
 
     stale = _anchor_staleness()
     if stale:
-        advisory.append((f'anchor {len(stale)} edit(s) behind reality', 'docs.py hydrate'))
-        print(f'\n[!] ANCHOR STALE — {len(stale)} file(s) changed after the anchor: {stale[:6]}')
-        print('    → the first thing a session reads is behind reality. Run `hydrate` to refresh it.')
+        advisory.append(('low', f'anchor {len(stale)} edit(s) behind reality', 'docs.py hydrate',
+                         f'[!] ANCHOR STALE — {len(stale)} file(s) changed after the anchor: {stale[:6]}\n'
+                         '    → the first thing a session reads is behind reality. Run `hydrate` to refresh it.'))
 
     rot = _anchor_rot()
     if rot:
-        advisory.append((f'anchor pointer rot: {rot[0][:64]}' + (f' (+{len(rot) - 1} more)' if len(rot) > 1 else ''),
-                         'edit the anchor header — it is the first thing every session reads'))
-        print(f'\n[!] ANCHOR POINTER ROT — {len(rot)} issue(s) in the anchor header:')
-        for r_ in rot[:3]:
-            print(f'    {r_}')
+        advisory.append(('low', f'anchor pointer rot: {rot[0][:64]}' + (f' (+{len(rot) - 1} more)' if len(rot) > 1 else ''),
+                         'edit the anchor header — it is the first thing every session reads',
+                         f'[!] ANCHOR POINTER ROT — {len(rot)} issue(s) in the anchor header:\n'
+                         + '\n'.join(f'    {r_}' for r_ in rot[:3])))
 
     contra = _contradictions()
     if contra:
@@ -521,16 +520,15 @@ def cmd_rehydrate(a):
 
     sus = _suspect_decisions()
     if sus:
-        advisory.append((f'suspect decision(s) {sus} referenced as superseded but not marked', 'review + docs.py supersede if real'))
-        print(f'\n[!] SUSPECT (referenced as superseded, not marked): {sus}')
+        advisory.append(('low', f'suspect decision(s) {sus} referenced as superseded but not marked', 'review + docs.py supersede if real',
+                         f'[!] SUSPECT (referenced as superseded, not marked): {sus}'))
 
     pend = [x for x in _load_jsonl(PENDING) if not x.get('drained')]
     if pend:
-        advisory.append((f'{len(pend)} unflushed decision/journal item(s) from a prior session', 'docs.py hydrate'))
-        print(f'\n[!] {len(pend)} UNFLUSHED item(s) from a prior session (visible debt):')
-        for x in pend[-6:]:
-            print(f'    {x.get("kind")}: {x.get("title", "")[:80]}' + ('  (DRAFT)' if x.get('staged') else ''))
-        print('    → run `docs.py hydrate` to land/drain them.')
+        advisory.append(('low', f'{len(pend)} unflushed decision/journal item(s) from a prior session', 'docs.py hydrate',
+                         f'[!] {len(pend)} UNFLUSHED item(s) from a prior session (visible debt):\n'
+                         + '\n'.join(f'    {x.get("kind")}: {x.get("title", "")[:80]}' + ('  (DRAFT)' if x.get('staged') else '') for x in pend[-6:])
+                         + '\n    → run `docs.py hydrate` to land/drain them.'))
 
     if os.path.exists(VERIFY_STAMP):
         s = json.load(open(VERIFY_STAMP))
@@ -539,21 +537,20 @@ def cmd_rehydrate(a):
             print('\n[!!] VERIFY FAILED — the last audit did not pass.')
             print('    → fix, then re-run: docs.py verify run; "done" is gated on it (`verify done`).')
         elif s.get('deliverables') != _deliverable_hash():
-            advisory.append(('verify stamp stale — deliverables changed since last passing audit', 'docs.py verify run'))
-            print('\n[!] VERIFY STALE — deliverables changed since the last PASSING audit (files moved/edited).')
-            print('    → re-run to confirm still-green: docs.py verify run')
+            advisory.append(('high', 'verify stamp stale — deliverables changed since last passing audit', 'docs.py verify run',
+                             '[!] VERIFY STALE — deliverables changed since the last PASSING audit (files moved/edited).\n'
+                             '    → re-run to confirm still-green: docs.py verify run'))
 
     hyg = _hygiene_problems()
     if hyg:
-        advisory.append((f'{len(hyg)} hygiene issue(s) in deliverable dirs', 'docs.py hygiene'))
-        print(f'\n[!] HYGIENE — {len(hyg)} issue(s), e.g.: {hyg[0]}')
-        print('    → run `docs.py hygiene` for the full list.')
+        advisory.append(('low', f'{len(hyg)} hygiene issue(s) in deliverable dirs', 'docs.py hygiene',
+                         f'[!] HYGIENE — {len(hyg)} issue(s), e.g.: {hyg[0]}\n    → run `docs.py hygiene` for the full list.'))
 
     orph = _orphan_list()
     if orph:
-        advisory.append((f'{len(orph)} dangling reference(s) in the memory graph', 'docs.py orphans'))
-        print(f'\n[!] ORPHANS — {len(orph)} dangling reference(s), e.g. {orph[0][0]}: {orph[0][1]}')
-        print('    → run `docs.py orphans` for the full list.')
+        advisory.append(('high', f'{len(orph)} dangling reference(s) in the memory graph', 'docs.py orphans',
+                         f'[!] ORPHANS — {len(orph)} dangling reference(s), e.g. {orph[0][0]}: {orph[0][1]}\n'
+                         '    → run `docs.py orphans` for the full list.'))
 
     parked = []
     for rid, s in _open_runs():
@@ -562,44 +559,52 @@ def cmd_rehydrate(a):
         if agem > 7 * 24 * 60:  # >7 days idle: collapse to one compact line — never silent, never noisy
             parked.append(rid); continue
         age = f'{agem // 1440}d ago' if agem >= 1440 else (f'{agem // 60}h ago' if agem >= 60 else f'{agem}m ago')
-        advisory.append((f'run {rid} mid-flight: {len(s["done"])}/{s["total"] or "?"} done, {npend} pending ({age})', f'docs.py run resume {rid}  (or `run close {rid}` to abandon)'))
-        print(f'\n[!] RUN MID-FLIGHT — {rid} "{s["man"].get("label")}": {len(s["done"])}/{s["total"] or "?"} done, '
-              f'{npend} pending, {len(s["failed"])} failed, last mark {age}' + ('  [STALLED]' if agem >= 10 else ''))
-        print(f'    → resume where it left off: docs.py run resume {rid}   (do NOT restart from 0)')
+        advisory.append(('high', f'run {rid} mid-flight: {len(s["done"])}/{s["total"] or "?"} done, {npend} pending ({age})', f'docs.py run resume {rid}  (or `run close {rid}` to abandon)',
+                         f'[!] RUN MID-FLIGHT — {rid} "{s["man"].get("label")}": {len(s["done"])}/{s["total"] or "?"} done, '
+                         f'{npend} pending, {len(s["failed"])} failed, last mark {age}' + ('  [STALLED]' if agem >= 10 else '')
+                         + f'\n    → resume where it left off: docs.py run resume {rid}   (do NOT restart from 0)'))
     if parked:
-        advisory.append((f'{len(parked)} run(s) parked idle >7 days: {", ".join(parked)}', 'docs.py run status <id> — then resume or close'))
-        print(f'\n[!] PARKED — {len(parked)} run(s) idle >7 days: {", ".join(parked)} (resume or `run close`; never auto-deleted)')
+        advisory.append(('low', f'{len(parked)} run(s) parked idle >7 days: {", ".join(parked)}', 'docs.py run status <id> — then resume or close',
+                         f'[!] PARKED — {len(parked)} run(s) idle >7 days: {", ".join(parked)} (resume or `run close`; never auto-deleted)'))
 
     for stream, n, tgt in _unreconciled_sink():
-        advisory.append((f'{n} captured record(s) in "{stream}" not yet merged into {tgt or "target"}', f'docs.py sink import --stream {stream}'))
-        print(f'\n[!] CAPTURE INBOX — {n} record(s) in "{stream}" captured but not merged into {tgt or "target"}:')
-        print(f'    → fetched data at risk of disposal. Reconcile: docs.py sink import --stream {stream}')
+        advisory.append(('high', f'{n} captured record(s) in "{stream}" not yet merged into {tgt or "target"}', f'docs.py sink import --stream {stream}',
+                         f'[!] CAPTURE INBOX — {n} record(s) in "{stream}" captured but not merged into {tgt or "target"}:\n'
+                         f'    → fetched data at risk of disposal. Reconcile: docs.py sink import --stream {stream}'))
 
     if os.path.exists(LIVETEST) and json.load(open(LIVETEST)).get('state') == 'handed_off':
-        advisory.append(('livetest HANDED OFF — awaiting the user\'s live verdict', 'docs.py livetest confirm|reject --note "..."'))
-        print('\n[!] LIVETEST — handed off to the user; `verify done` stays blocked until their verdict.')
+        advisory.append(('low', 'livetest HANDED OFF — awaiting the user\'s live verdict', 'docs.py livetest confirm|reject --note "..."',
+                         '[!] LIVETEST — handed off to the user; `verify done` stays blocked until their verdict.'))
 
 
     coord = _coord_dir()
     if coord and os.path.exists(os.path.join(coord, 'handoffs.jsonl')):
         oh = [r for r in _load_jsonl(os.path.join(coord, 'handoffs.jsonl')) if r.get('status') == 'open']
         if oh:
-            advisory.append((f'{len(oh)} open cross-worktree handoff(s)', 'docs.py handoff list'))
-            print(f'\n[!] HANDOFFS — {len(oh)} open across this repo\'s worktrees:')
-            for r_ in oh[:4]:
-                print(f'    #{r_["id"]} → {r_["to"]}: {r_.get("title", "")[:70]} (from {r_.get("from_worktree")})')
+            advisory.append(('low', f'{len(oh)} open cross-worktree handoff(s)', 'docs.py handoff list',
+                             f'[!] HANDOFFS — {len(oh)} open across this repo\'s worktrees:\n'
+                             + '\n'.join(f'    #{r_["id"]} → {r_["to"]}: {r_.get("title", "")[:70]} (from {r_.get("from_worktree")})' for r_ in oh[:4])))
 
     open_asks = [r for r in _load_asks() if r['status'] == 'open']
     hot_asks = [r for r in open_asks if r['raised'] >= 3]
     if hot_asks:
-        advisory.append((f'{len(hot_asks)} ask(s) raised 3+ times still open', 'address, or docs.py ask close <id> --evidence <path>'))
-        print(f'\n[!] RECURRING ASK(S) — raised 3+ times and still open:')
-        for r in sorted(hot_asks, key=lambda r: -r['raised'])[:4]:
-            print(f'    #{r["id"]} raised {r["raised"]}x: {r["text"][:84]}')
+        advisory.append(('low', f'{len(hot_asks)} ask(s) raised 3+ times still open', 'address, or docs.py ask close <id> --evidence <path>',
+                         '[!] RECURRING ASK(S) — raised 3+ times and still open:\n'
+                         + '\n'.join(f'    #{r["id"]} raised {r["raised"]}x: {r["text"][:84]}' for r in sorted(hot_asks, key=lambda r: -r['raised'])[:4])))
     if open_asks:
         print(f'\n--- OPEN ASKS: {len(open_asks)} standing user ask(s) (docs/asks.md) ---')
         for r in sorted(open_asks, key=lambda r: -r['raised'])[:5]:
             print(f'    #{r["id"]} raised {r["raised"]}x: {r["text"][:84]}')
+
+    highs = [x for x in advisory if x[0] == 'high']
+    lows = [x for x in advisory if x[0] == 'low']
+    show_all = getattr(a, 'full', False) or len(advisory) <= 5
+    for _, _, _, stanza in highs + (lows if show_all else []):
+        print('\n' + stanza)
+    if lows and not show_all:
+        names = ' · '.join(x[3].splitlines()[0][4:].split(' — ')[0][:26] for x in lows)
+        print(f'\n[!] +{len(lows)} more advisory item(s): {names}')
+        print('    → each with its fix command in CORRECTIVE ACTIONS below (full stanzas: rehydrate --full)')
 
     js = _journals_sorted()
     print(f'\n--- newest journal --- ' + (os.path.basename(js[-1]) if js else '(none)'))
@@ -607,7 +612,7 @@ def cmd_rehydrate(a):
         print('\n--- CORRECTIVE ACTIONS (' + f'{len(blocking)} blocking · {len(advisory)} advisory) ---')
         for i, (msg, fix) in enumerate(blocking, 1):
             print(f'  [B{i}] {msg}\n       → {fix}')
-        for i, (msg, fix) in enumerate(advisory, 1):
+        for i, (_, msg, fix, _s) in enumerate(highs + lows, 1):
             print(f'  [A{i}] {msg}\n       → {fix}')
     print('\n' + '=' * 70)
     if blocking:
@@ -1732,8 +1737,9 @@ def main():
     ap = argparse.ArgumentParser(prog='docs.py', description='keel memory + enforcement CLI')
     ap.add_argument('--version', action='version', version=f'keel {KEEL_VERSION}')
     sub = ap.add_subparsers(dest='cmd', required=True)
-    for name in ('init', 'rehydrate', 'hydrate', 'contradictions', 'friction'):
+    for name in ('init', 'hydrate', 'contradictions', 'friction'):
         sub.add_parser(name).set_defaults(fn=globals()[f'cmd_{name}'])
+    p = sub.add_parser('rehydrate'); p.add_argument('--full', action='store_true'); p.set_defaults(fn=cmd_rehydrate)
     p = sub.add_parser('intro'); p.add_argument('--force', action='store_true'); p.set_defaults(fn=cmd_intro)
     p = sub.add_parser('profile'); p.add_argument('name', nargs='?'); p.set_defaults(fn=cmd_profile)
     for name in ('decision', 'journal'):

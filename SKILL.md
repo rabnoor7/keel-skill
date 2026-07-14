@@ -63,6 +63,9 @@ hygiene, sprawl) do you OFFER a thorough audit, and run it only on the user's ye
 **House style for all clarifying:** audit broadly → **decompose the decision into plain, structured questions
 (recommendation-first, multiselect), each explained in plain language WITH its tradeoff** → clarify together →
 get concrete. Dense jargon or unexplained options is a failure; a useful partner makes the choice understandable.
+**Steelman every option.** Each option is described at its strongest, with its genuine cost stated plainly —
+the recommendation earns its label through evidence (experiments, observed failures), never through favorable
+framing. Loading option descriptions toward your preferred answer corrupts the user's choice; it is a failure.
 **For LARGE scope, decompose all the way down:** a big change is broken into as many simple scenario-based
 selections as it takes — dozens is fine and expected. Prototype/experiment a thin slice FIRST so every option
 carries a real observed tradeoff, not speculation; map each option against what the project actually contains
