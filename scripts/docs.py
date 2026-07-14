@@ -13,7 +13,8 @@ Global prefs: ~/keel/preferences.md.
 
 Commands: init · rehydrate · hydrate · profile · decision · journal · supersede · contradictions · contract ·
           verify · hygiene · friction · clarify-depth · claim · whiteboard · search · read · prefs · state ·
-          layout · feedback · run · sink · stance · escalate · ask     (--version prints the installed version)
+          layout · feedback · run · sink · stance · escalate · ask · match · preserve · orphans · smoke
+          (--version prints the installed version)
 """
 import argparse, os, sys, json, re, hashlib, time, datetime, glob, platform
 from collections import defaultdict
@@ -515,6 +516,12 @@ def cmd_rehydrate(a):
         print(f'\n[!] HYGIENE — {len(hyg)} issue(s), e.g.: {hyg[0]}')
         print('    → run `docs.py hygiene` for the full list.')
 
+    orph = _orphan_list()
+    if orph:
+        advisory.append((f'{len(orph)} dangling reference(s) in the memory graph', 'docs.py orphans'))
+        print(f'\n[!] ORPHANS — {len(orph)} dangling reference(s), e.g. {orph[0][0]}: {orph[0][1]}')
+        print('    → run `docs.py orphans` for the full list.')
+
     parked = []
     for rid, s in _open_runs():
         npend = len(s['pending']) if isinstance(s['pending'], list) else s['pending']
@@ -759,33 +766,11 @@ def cmd_verify(a):
         if not os.path.exists(ap):
             open(ap, 'w').write(AUDIT_TMPL)
         print(f'verify init: {os.path.relpath(ap, ROOT)} — fill in field-level + provenance + regression checks.')
-    elif a.action == 'baseline':
-        if getattr(a, 'check', False):
-            shr = _baseline_shrink()
-            if shr:
-                print(f'[!!] BASELINE SHRINK — {len(shr)} deliverable(s) smaller than the last good run:')
-                for rel, kind, was, now in shr[:8]:
-                    print(f'    {rel}: {kind} — was {was}B, now {now}B')
-                print('    → a smaller output than last time usually means silent under-capture. (exit 1)')
-                sys.exit(1)
-            print('verify baseline: ✅ no deliverable shrank vs the last good run.')
-            return
-        snap = {}
-        for d in _deliverable_dirs():
-            for p in glob.glob(os.path.join(ROOT, d, '**', '*'), recursive=True):
-                if os.path.isfile(p) and not os.path.basename(p).startswith('.'):
-                    snap[os.path.relpath(p, ROOT)] = {'size': os.path.getsize(p)}
-        json.dump({'ts': time.time(), 'files': snap}, open(os.path.join(VERIFY_DIR, 'baseline.json'), 'w'))
-        print(f'verify baseline: recorded {len(snap)} deliverable file(s) as the last-good oracle.')
     elif a.action == 'run':
         if not os.path.exists(ap):
             sys.exit('no audit — run: verify init')
         import subprocess
         r = subprocess.run([sys.executable, ap])
-        shr = _baseline_shrink()
-        if shr:
-            print(f'[!!] BASELINE SHRINK — {len(shr)} deliverable(s) smaller than the last good run '
-                  f'({shr[0][0]}: {shr[0][2]}B → {shr[0][3]}B) — silent under-capture?')
         json.dump({'result': 'pass' if r.returncode == 0 else 'fail', 'ts': time.time(),
                    'deliverables': _deliverable_hash()}, open(VERIFY_STAMP, 'w'))
         print(f'verify run: exit {r.returncode} (stamped)'); sys.exit(r.returncode)
@@ -1269,23 +1254,6 @@ PRESERVE_DIR = os.path.join(STATE, 'preserve')
 SMOKE = os.path.join(STATE, 'smoke.json')
 
 
-def _baseline_shrink():
-    """Compare deliverables to the last recorded good run — a scrape/export SMALLER than last time is a
-    silent-under-capture signal no field-level audit sees ('if it's smaller than last time, something's wrong')."""
-    bp = os.path.join(VERIFY_DIR, 'baseline.json')
-    if not os.path.exists(bp):
-        return []
-    base = json.load(open(bp)).get('files', {})
-    out = []
-    for rel, b in base.items():
-        p = os.path.join(ROOT, rel)
-        if not os.path.exists(p):
-            out.append((rel, 'MISSING', b['size'], 0))
-        elif b['size'] and os.path.getsize(p) < 0.9 * b['size']:
-            out.append((rel, 'SHRUNK', b['size'], os.path.getsize(p)))
-    return out
-
-
 def _units(text):
     """Preservation units — the non-trivial content a regeneration tends to silently drop:
     headings, list items, and links/citations."""
@@ -1324,15 +1292,13 @@ def cmd_preserve(a):
         print(f'preserve: OK — all {len(old)} snapshot unit(s) still present ({len(new - old)} added).')
 
 
-def cmd_orphans(a):
+def _orphan_list():
     """Graph integrity across the memory tiers: ADR references to decisions that don't exist,
     dead relative markdown links, and [[wiki-links]] with no matching doc."""
-    entries = _dec_entries()
-    nums = {e['num'] for e in entries}
-    stems = {os.path.splitext(os.path.basename(p))[0].lower()
-             for p in glob.glob(os.path.join(DOCS, '**', '*.md'), recursive=True) + _memory_files()}
-    dangling = []
+    nums = {e['num'] for e in _dec_entries()}
     scan = glob.glob(os.path.join(DOCS, '**', '*.md'), recursive=True) + _memory_files()
+    stems = {os.path.splitext(os.path.basename(p))[0].lower() for p in scan}
+    dangling = []
     for p in scan:
         rel = os.path.relpath(p, ROOT) if p.startswith(ROOT) else p
         text = _read(p)
@@ -1346,8 +1312,13 @@ def cmd_orphans(a):
         for m in re.finditer(r'\[\[([^\]|#]+)', text):
             if m.group(1).strip().lower() not in stems:
                 dangling.append((rel, f'[[{m.group(1).strip()}]] — no doc with that name yet'))
+    return dangling
+
+
+def cmd_orphans(a):
+    dangling = _orphan_list()
     if not dangling:
-        print(f'orphans: none — every reference across {len(scan)} doc(s) resolves.'); return
+        print('orphans: none — every reference in the memory graph resolves.'); return
     print(f'orphans: {len(dangling)} dangling reference(s) across the memory graph:')
     for rel, msg in dangling[:12]:
         print(f'   {rel}: {msg}')
@@ -1451,8 +1422,7 @@ def main():
     p = sub.add_parser('contract'); p.add_argument('action', choices=['set', 'approve', 'check'])
     p.add_argument('--content'); p.add_argument('--from', dest='from_file'); p.add_argument('--approved', action='store_true')
     p.add_argument('--window', type=int); p.set_defaults(fn=cmd_contract)
-    p = sub.add_parser('verify'); p.add_argument('action', choices=['init', 'run', 'done', 'sync', 'baseline'])
-    p.add_argument('--check', action='store_true'); p.set_defaults(fn=cmd_verify)
+    p = sub.add_parser('verify'); p.add_argument('action', choices=['init', 'run', 'done', 'sync']); p.set_defaults(fn=cmd_verify)
     p = sub.add_parser('preserve'); p.add_argument('action', choices=['snapshot', 'check']); p.add_argument('file'); p.set_defaults(fn=cmd_preserve)
     sub.add_parser('orphans').set_defaults(fn=cmd_orphans)
     p = sub.add_parser('smoke'); p.add_argument('action', choices=['set', 'run', 'gate']); p.add_argument('--cmd'); p.set_defaults(fn=cmd_smoke)

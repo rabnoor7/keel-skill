@@ -87,7 +87,13 @@ approved the plan first.
 - **Expensive or out-of-lane ACTIONS are gated too — not just file-writes.** Before a big/costly action (a
   large agent swarm, a multi-hundred-item run, a mass web-search fan-out), state its rough **cost + whose
   pipeline owns it**, ask **"is a cheaper external tool already doing this?"**, and get a go. The contract
-  covers *what to build*; this covers *whether to spend*.
+  covers *what to build*; this covers *whether to spend*. **If a smoke command is configured
+  (`docs.py smoke set`), a fresh passing `docs.py smoke gate` is REQUIRED before launching the expensive
+  run** — the one-minute sample validates the whole pipeline before hours are committed to it.
+- **Editing an important deliverable doc? EDIT, never regenerate — and prove it.** `docs.py preserve
+  snapshot <file>` before touching it; `preserve check <file>` must pass before claiming done on it. A
+  regeneration that silently drops content (headings, list items, links/citations) fails with every loss
+  listed by name; losses ship only with the user's explicit sign-off.
 - **Pivotal / irreversible / costly calls that are genuinely the USER's → `docs.py escalate raise`.** Before
   any irreversible or externally-visible act (sending real messages, destructive ops on protected data,
   launching an expensive run), when the call is the user's to make: raise an escalation with the options and
@@ -131,7 +137,8 @@ sit last. Conforming to what's there beats imposing a default.
 `rehydrate · intro · hydrate · profile · contract · verify (init/run/done/sync) · hygiene · friction ·
 clarify-depth · contradictions · claim · whiteboard · supersede · decision · journal · search · prefs · state ·
 layout · feedback · run (start/mark/status/resume/close) · sink (add/status/import) · stance (freeze/confirm) ·
-escalate (raise/resolve) · ask (add/bump/close --evidence)`
+escalate (raise/resolve) · ask (add/bump/close --evidence) · match · preserve (snapshot/check) ·
+orphans · smoke (set/run/gate)`
 — run `python3 scripts/docs.py --help` · `docs.py --version` reports the installed version.
 
 ## Standing defaults
