@@ -2,7 +2,7 @@
 
 All notable changes to keel. Versions follow semver; `docs.py --version` reports the installed version.
 
-## [1.1.0] — unreleased (in development)
+## [1.1.0] — 2026-07-15
 
 ### Fixed
 - **ADR numbering corruption**: a date-named journal draft in `.keel/pending/` (e.g. `2026-07-14-*.md`)
