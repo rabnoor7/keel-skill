@@ -2,7 +2,7 @@
 
 All notable changes to keel. Versions follow semver; `docs.py --version` reports the installed version.
 
-## [1.2.0] — unreleased (in development)
+## [1.2.0] — 2026-07-15
 
 ### Added
 - **Outcome decomposition** — bring a big fuzzy OUTCOME ("build my personal brand", "reach 1000 people")
