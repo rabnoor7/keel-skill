@@ -6,6 +6,7 @@
 ![python](https://img.shields.io/badge/python-3%20(stdlib%20only)-1f6feb)
 ![self-tested](https://img.shields.io/badge/self--tested-passing-2ea043)
 ![skill](https://img.shields.io/badge/Claude%20Code-skill-8957e5)
+![license](https://img.shields.io/badge/license-MIT-2ea043)
 
 keel is a [Claude Code](https://claude.com/claude-code) skill that turns Claude into a disciplined
 engineering partner instead of a code vending machine. It maps before it writes, clarifies before it
@@ -173,3 +174,9 @@ zip -r keel-skill.zip keel-skill -x '*/.git/*' '*/.introduced' '*/__pycache__/*'
 ```
 The one-time intro fires fresh on the recipient's machine — the `.introduced` marker is per-install and
 never travels in the zip.
+
+---
+
+## License
+
+[MIT](LICENSE) — use it, fork it, ship it.
