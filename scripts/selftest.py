@@ -101,6 +101,18 @@ def main():
         if cmdname not in helptext:
             fails.append(f'command "{cmdname}" missing from --help (parser wiring regressed)')
 
+    # outcome decomposition: dormant with no roadmap; parses north-star + checkpoints when present
+    if docs._roadmap() is not None:
+        fails.append('_roadmap() must be None with no docs/roadmap.md (feature not dormant → breaks non-adopters)')
+    os.makedirs(os.path.join(root, 'docs'), exist_ok=True)
+    open(os.path.join(root, 'docs', 'roadmap.md'), 'w').write(
+        '# Roadmap\n\n## North star\nbuild my brand\n\n## Checkpoints\n1. [reached] niche\n   - micro-niche chosen\n2. [active] audience\n')
+    rm = docs._roadmap()
+    if not rm or rm.get('north_star') != 'build my brand' or len(rm.get('checkpoints', [])) != 2:
+        fails.append(f'_roadmap parse: got {rm} (expected north_star + 2 checkpoints)')
+    elif [c['status'] for c in rm['checkpoints']] != ['reached', 'active']:
+        fails.append('_roadmap: checkpoint statuses mis-parsed')
+
     if fails:
         print('SELFTEST FAILED:')
         for f in fails:

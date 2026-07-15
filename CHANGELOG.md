@@ -2,6 +2,28 @@
 
 All notable changes to keel. Versions follow semver; `docs.py --version` reports the installed version.
 
+## [1.2.0] — unreleased (in development)
+
+### Added
+- **Outcome decomposition** — bring a big fuzzy OUTCOME ("build my personal brand", "reach 1000 people")
+  and keel decomposes it into aligned CHECKPOINTS instead of diving into execution. `docs.py outcome set/show/clear
+  "<north star>"` · `checkpoint add "<layer>"` · `checkpoint status <n> reached|active|undecided` ·
+  `checkpoint choice <n> --text "..." [--to-decision "<title>"]` (promote a pivotal choice to a searchable
+  ADR). The shape lives in a committed, hand-editable `docs/roadmap.md`; rehydrate surfaces a ROADMAP block
+  (north star · statuses · "you are here" · next undecided checkpoint).
+- **Decompose-before-execute gate** — an outcome with zero checkpoints is a BLOCKING state in both
+  `rehydrate` AND `contract check`, so a build cannot skip decomposition even under "just build it" pressure
+  (fixes a real session where keel executed on a fuzzy brand goal instead of breaking it down first). `outcome clear` archives the roadmap and lifts the block if an outcome is abandoned.
+- **`general` profile** + broadened identity — keel now covers goal-shaped, not-only-code projects
+  (personal brand, outreach, content, launch), not just software. SKILL.md gains an Outcome-Decomposition
+  loop step (§0a); the install intro and README reflect the wider scope.
+
+### Compatibility
+- **Purely additive.** The outcome feature is dormant unless `docs.py outcome set` is run (no
+  `docs/roadmap.md` → zero new behavior). Verified: `rehydrate` byte-identical to 1.1.0 across 8 corpus
+  repos; round-trip writes byte-identical; existing 23-turn conversational flow 23/23; a user who never
+  touches `outcome`/`checkpoint` sees no change.
+
 ## [1.1.0] — 2026-07-15
 
 ### Fixed

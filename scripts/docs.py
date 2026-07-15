@@ -14,7 +14,7 @@ Global prefs: ~/keel/preferences.md.
 Commands: init · rehydrate · hydrate · profile · decision · journal · supersede · contradictions · contract ·
           verify · hygiene · friction · clarify-depth · claim · whiteboard · search · read · prefs · state ·
           layout · feedback · run · sink · stance · escalate · ask · match · preserve · orphans · smoke ·
-          accept · route · critique · coverage · livetest · handoff
+          accept · route · critique · coverage · livetest · handoff · outcome · checkpoint
           (--version prints the installed version)
 """
 import argparse, os, sys, json, re, hashlib, time, datetime, glob, platform
@@ -47,7 +47,7 @@ JRN_CANON = os.path.join(DOCS, 'journal')
 # + per-project mirror. Local only; never sent anywhere.
 FEEDBACK_CENTRAL = os.path.expanduser('~/.claude/keel/feedback.jsonl')
 FEEDBACK_LOCAL = os.path.join(STATE, 'feedback.jsonl')
-PROFILES = ('web-app', 'data-pipeline', 'automation', 'cli-tool', 'ml')
+PROFILES = ('web-app', 'data-pipeline', 'automation', 'cli-tool', 'ml', 'general')
 # A supersession CLAIM (not mere co-occurrence). Two grammatical shapes, both requiring the ADR to be the
 # verb's object — so "override files … see ADR 14" and "do NOT web-search … ADR 13" stay clean.
 _ADRREF = r'ADR[- ]?0*(\d{1,4})'
@@ -393,15 +393,20 @@ def _suspect_decisions():
 
 INTRO_TEXT = """\
 ======================================================================
-  keel is installed — your disciplined engineering partner.
+  keel is installed — your disciplined partner.
 ======================================================================
 
-keel helps you BUILD and EVOLVE software of any kind — web apps, data pipelines,
-scraping/automation, CLI tools, ML. It is not a code vending machine: it maps
-before it writes, clarifies before it codes, and verifies before it says "done."
+keel helps you BUILD and EVOLVE anything complex — software (web apps, data
+pipelines, automation, CLI, ML) AND goal-shaped projects (a personal brand, an
+outreach push, a launch). It is not a vending machine: it maps before it writes,
+clarifies before it codes, and verifies before it says "done."
+
+BIG FUZZY GOAL? It won't dive in. It decomposes the outcome into checkpoints,
+aligns each with you through plain tradeoff-choices, and tracks the shape in
+docs/roadmap.md — so you get exactly what you wanted, not something unaligned.
 
 THE LOOP
-  rehydrate -> [discuss <-> clarify] -> build (behind a contract) -> verify -> hydrate
+  rehydrate -> [decompose the outcome ->] [discuss <-> clarify] -> build (behind a contract) -> verify -> hydrate
   - rehydrate  on an existing project it reads your docs/ memory first (READ-ONLY)
   - clarify    asks only what it genuinely can't resolve itself — in plain language,
                tradeoffs spelled out — then shows you a build contract
@@ -415,8 +420,8 @@ WHAT THAT FEELS LIKE
   - it remembers decisions across sessions, so you don't re-explain yourself
 
 TO START
-  Just tell it what you want to build or change. On an existing project, say
-  "rehydrate" (or start describing the work) and it loads context first.
+  Just tell it what you want to build, change, or achieve. On an existing project,
+  say "rehydrate" (or start describing the work) and it loads context first.
   Standing state survives sessions: a freeze stays frozen, an unanswered
   escalation stays blocking, an open ask stays open — until YOU clear them.
   (docs.py --version prints the installed version.)
@@ -473,6 +478,24 @@ def cmd_rehydrate(a):
     print(f'\nPROFILE: {_read(PROFILE).strip() or "(unset — run: docs.py profile <name>)"}')
     mdirs = _memory_dirs()
     print('MEMORY tiers found: ' + (', '.join((os.path.relpath(d, ROOT) if d.startswith(ROOT) else d) for d in mdirs) or '(none)'))
+
+    # OUTCOME DECOMPOSITION — no-op when docs/roadmap.md doesn't exist (every project that never runs
+    # `docs.py outcome set` sees nothing here, ever). When an outcome IS set, surface where the roadmap
+    # stands; ZERO checkpoints means the fuzzy outcome was never decomposed — do not let execution proceed
+    # on it (mirrors `contract check` refusing a build with no signed contract).
+    rm = _roadmap()
+    if rm:
+        _print_roadmap(rm)
+        if not rm['checkpoints']:
+            blocking.append((f'outcome set but NOT decomposed: "{rm["north_star"][:60]}" has 0 checkpoints',
+                             'docs.py checkpoint add "<layer>"  (repeat per layer, then align each through choices)'))
+            print(f'\n[!!] OUTCOME NOT DECOMPOSED — "{rm["north_star"][:70]}" has zero checkpoints.')
+            print('    → a fuzzy outcome with no checkpoint-map is not ready to execute. Decompose it first:')
+            print('      docs.py checkpoint add "<layer>"  (repeat per layer)   — or `docs.py outcome clear` to abandon it')
+        elif not any(c['status'] == 'active' for c in rm['checkpoints']):
+            advisory.append(('low', 'roadmap has no checkpoint marked active (no "you are here")', 'docs.py checkpoint status <n> active',
+                             '[!] ROADMAP — no checkpoint is marked active yet (no "you are here" pointer).\n'
+                             '    → docs.py checkpoint status <n> active once you know where the work currently sits.'))
 
     if os.path.exists(ANCHOR):
         alabel = os.path.relpath(ANCHOR, ROOT) if os.path.abspath(ANCHOR).startswith(ROOT) else ANCHOR
@@ -784,6 +807,11 @@ def cmd_contract(a):
         if esc_open:
             print(f'contract check: ✗ BLOCKED-ON-USER — {len(esc_open)} open escalation(s) (#'
                   + ', #'.join(str(r["id"]) for r in esc_open[:4]) + '). Resolve before building.'); sys.exit(1)
+        rm = _roadmap()  # the teeth: a declared outcome with no checkpoint-map cannot be built into directly
+        if rm and rm.get('north_star') and not rm.get('checkpoints'):
+            print(f'contract check: ✗ OUTCOME NOT DECOMPOSED — "{rm["north_star"][:60]}" has 0 checkpoints. '
+                  'A fuzzy outcome must be broken into aligned checkpoints before any build.'
+                  '\n  → docs.py checkpoint add "<layer>"  (per layer, align each through choices)'); sys.exit(1)
         if not os.path.exists(CONTRACT):
             print('contract check: NONE — no build without a signed contract.'); sys.exit(1)
         c = json.load(open(CONTRACT))
@@ -1742,6 +1770,147 @@ def cmd_ask(a):
     lock.__exit__()
 
 
+# ---------------- OUTCOME DECOMPOSITION (dogfood prototype): outcome · checkpoint ----------------
+# Closes a proven gap: a fuzzy OUTCOME ("build my personal brand on social media") got executed directly
+# instead of decomposed into checkpoints and aligned through questions, one layer at a time. docs/roadmap.md
+# is committed + hand-editable (same tier as docs/asks.md) — the north-star outcome, its ordered checkpoints
+# (the layers), each checkpoint's status, and the choices that shaped it. `rehydrate` surfaces it read-only
+# and is a strict no-op for any project that never runs `outcome set` (no roadmap.md → nothing printed, no
+# new blocking/advisory entries — see the guard at the top of the inserted rehydrate block).
+
+ROADMAP_MD = os.path.join(DOCS, 'roadmap.md')
+CP_LINE = re.compile(r'^(\d+)\.\s*\[(reached|active|undecided)\]\s*(.+)$', re.M)
+ROADMAP_HDR = (
+    '# Roadmap — outcome decomposition\n\n'
+    'A fuzzy outcome, decomposed into ordered checkpoints (the layers); each checkpoint carries a\n'
+    'status (undecided | active | reached) and the choices that shaped it. Hand-editable.\n'
+    '  add a checkpoint : docs.py checkpoint add "<layer>"\n'
+    '  set status       : docs.py checkpoint status <n> reached|active|undecided\n'
+    '  record a choice  : docs.py checkpoint choice <n> --text "..."\n\n')
+ROADMAP_PLACEHOLDER = '## Checkpoints\n(none yet — docs.py checkpoint add "<layer>")\n'
+
+
+def _roadmap():
+    """Read docs/roadmap.md → {'north_star', 'checkpoints':[{'n','status','title','choices'}]}, or None if
+    no outcome has been set — the no-op case every pre-existing project stays in forever unless it opts in."""
+    if not os.path.exists(ROADMAP_MD):
+        return None
+    text = _read(ROADMAP_MD)
+    m = re.search(r'^## North star\n(.*?)(?=\n##|\Z)', text, re.S | re.M)
+    north = m.group(1).strip() if m else ''
+    matches = list(CP_LINE.finditer(text))
+    cps = []
+    for i, cm in enumerate(matches):
+        start, end = cm.end(), (matches[i + 1].start() if i + 1 < len(matches) else len(text))
+        choices = [l.strip()[2:].strip() for l in text[start:end].splitlines() if l.strip().startswith('- ')]
+        cps.append({'n': int(cm.group(1)), 'status': cm.group(2), 'title': cm.group(3).strip(), 'choices': choices})
+    if not north and not cps:
+        return None
+    return {'north_star': north, 'checkpoints': cps}
+
+
+def _print_roadmap(rm):
+    print(f'\n--- ROADMAP: {rm["north_star"] or "(north star not set)"} ---')
+    if not rm['checkpoints']:
+        print('   (0 checkpoints — outcome not yet decomposed: docs.py checkpoint add "<layer>")')
+        return
+    active = next((c for c in rm['checkpoints'] if c['status'] == 'active'), None)
+    nxt = next((c for c in rm['checkpoints'] if c['status'] == 'undecided'), None)
+    tag = {'reached': '[x]', 'active': '[~]', 'undecided': '[ ]'}
+    for c in rm['checkpoints']:
+        here = '   <- YOU ARE HERE' if active and c['n'] == active['n'] else ''
+        print(f'   {tag.get(c["status"], "[ ]")} {c["n"]}. {c["title"]}{here}')
+        for ch in c['choices']:
+            print(f'         choice: {ch[:90]}')
+    if nxt:
+        print(f'   → next undecided checkpoint: #{nxt["n"]} {nxt["title"]} — align it through questions before building on it')
+
+
+def cmd_outcome(a):
+    if a.action == 'clear':  # escape hatch: an outcome-set-but-undecomposed blocks; this releases it
+        if not os.path.exists(ROADMAP_MD):
+            print('(no outcome to clear)'); return
+        os.makedirs(os.path.join(ROOT, 'archive'), exist_ok=True)
+        dst = os.path.join(ROOT, 'archive', 'roadmap-cleared.md')
+        os.replace(ROADMAP_MD, dst)  # archived, not destroyed — the decomposition isn't lost
+        print(f'outcome: cleared — roadmap archived to {os.path.relpath(dst, ROOT)} (the block is lifted).')
+        return
+    if a.action == 'set':
+        if not a.text or not a.text.strip():
+            sys.exit('outcome set "<north star>"')
+        _ensure(DOCS)
+        old = _read(ROADMAP_MD)
+        cm = re.search(r'(## Checkpoints\n.*)\Z', old, re.S)
+        cps_block = cm.group(1) if cm else ROADMAP_PLACEHOLDER
+        _atomic_write(ROADMAP_MD, ROADMAP_HDR + f'## North star\n{a.text.strip()}\n\n' + cps_block)
+        print(f'outcome: north star set → {os.path.relpath(ROADMAP_MD, ROOT)}')
+        if not cm:
+            print('  → not a scoped task; decompose it before executing: docs.py checkpoint add "<layer>" (repeat per layer)')
+    else:
+        rm = _roadmap()
+        if not rm:
+            print('(no outcome set — docs.py outcome set "<north star>")'); return
+        _print_roadmap(rm)
+
+
+def cmd_checkpoint(a):
+    if not os.path.exists(ROADMAP_MD):
+        sys.exit('no outcome set yet — docs.py outcome set "<north star>" first')
+    if a.action == 'list':
+        rm = _roadmap()
+        _print_roadmap(rm) if rm else print('(empty roadmap)')
+        return
+    rm = _roadmap() or {'north_star': '', 'checkpoints': []}
+    if a.action == 'add':
+        if not a.arg1 or not a.arg1.strip():
+            sys.exit('checkpoint add "<layer>"')
+        n = max((c['n'] for c in rm['checkpoints']), default=0) + 1
+        text = _read(ROADMAP_MD).replace(ROADMAP_PLACEHOLDER, '## Checkpoints\n')
+        if not text.endswith('\n'):
+            text += '\n'
+        text += f'{n}. [undecided] {a.arg1.strip()}\n'
+        _atomic_write(ROADMAP_MD, text)
+        print(f'checkpoint {n} added [undecided]: "{a.arg1.strip()}" → {os.path.relpath(ROADMAP_MD, ROOT)}')
+    elif a.action == 'status':
+        n, status = a.arg1, a.arg2
+        if status not in ('reached', 'active', 'undecided'):
+            sys.exit('checkpoint status <n> reached|active|undecided')
+        text = _read(ROADMAP_MD)
+        new_text, count = re.subn(rf'^{re.escape(str(n))}\.\s*\[\w+\]', f'{n}. [{status}]', text, flags=re.M)
+        if not count:
+            sys.exit(f'no checkpoint {n}')
+        _atomic_write(ROADMAP_MD, new_text)
+        print(f'checkpoint {n}: status → {status}')
+    elif a.action == 'choice':
+        n, txt = a.arg1, a.text
+        if not n or not txt:
+            sys.exit('checkpoint choice <n> --text "..."')
+        lines = _read(ROADMAP_MD).splitlines(keepends=True)
+        head_re = re.compile(rf'^{re.escape(str(n))}\.\s*\[\w+\]')
+        out, i, inserted = [], 0, False
+        while i < len(lines):
+            out.append(lines[i])
+            if head_re.match(lines[i]):
+                j = i + 1
+                while j < len(lines) and lines[j].strip().startswith('- '):
+                    out.append(lines[j]); j += 1
+                out.append(f'   - {txt.strip()}\n')
+                i = j; inserted = True
+                continue
+            i += 1
+        if not inserted:
+            sys.exit(f'no checkpoint {n}')
+        _atomic_write(ROADMAP_MD, ''.join(out))
+        print(f'checkpoint {n}: choice recorded.')
+        if getattr(a, 'to_decision', None):  # promote a pivotal shaping choice to a real, searchable ADR
+            num = _next_adr()
+            title = next((c['title'] for c in rm['checkpoints'] if c['n'] == int(n)), f'checkpoint {n}')
+            body = f'## Context\nShapes checkpoint {n} ({title}) of outcome: {rm.get("north_star", "")}.\n\n## Decision\n{txt.strip()}\n\n## Rejected\n(alternatives weighed at this checkpoint)\n'
+            _emit_record('decision', f'{num:04d}-{_slug(a.to_decision)}.md',
+                         f'# {num:04d} — {a.to_decision}\n\n{body}\n', DEC, False, a.to_decision, {'n': num})
+            print(f'   promoted to ADR {num:04d} — now searchable via docs.py match / search.')
+
+
 def main():
     ap = argparse.ArgumentParser(prog='docs.py', description='keel memory + enforcement CLI')
     ap.add_argument('--version', action='version', version=f'keel {KEEL_VERSION}')
@@ -1811,6 +1980,11 @@ def main():
     p = sub.add_parser('read'); p.add_argument('--all', action='store_true'); p.add_argument('--journal-limit', type=int); p.set_defaults(fn=cmd_read)
     p = sub.add_parser('prefs'); p.add_argument('--append'); p.set_defaults(fn=cmd_prefs)
     p = sub.add_parser('state'); p.add_argument('--note'); p.set_defaults(fn=cmd_state)
+    p = sub.add_parser('outcome'); p.add_argument('action', nargs='?', default='show', choices=['set', 'show', 'clear'])
+    p.add_argument('text', nargs='?'); p.set_defaults(fn=cmd_outcome)
+    p = sub.add_parser('checkpoint'); p.add_argument('action', choices=['add', 'status', 'choice', 'list'])
+    p.add_argument('arg1', nargs='?'); p.add_argument('arg2', nargs='?'); p.add_argument('--text')
+    p.add_argument('--to-decision', dest='to_decision'); p.set_defaults(fn=cmd_checkpoint)
     a = ap.parse_args()
     a.fn(a)
 

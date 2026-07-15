@@ -9,12 +9,13 @@
 ![license](https://img.shields.io/badge/license-MIT-2ea043)
 
 keel is a [Claude Code](https://claude.com/claude-code) skill that turns Claude into a disciplined
-engineering partner instead of a code vending machine. It maps before it writes, clarifies before it
-codes, and verifies before it claims done — and it keeps durable, per-project memory so you never
-re-explain your work across sessions.
+partner instead of a vending machine. It maps before it writes, clarifies before it codes, and verifies
+before it claims done — and it keeps durable, per-project memory so you never re-explain your work across
+sessions.
 
-Works for any kind of software — web apps, data pipelines, scraping/automation, CLI tools, ML. Pure
-Python 3, standard library only. Nothing to `pip install`.
+Works for any kind of software — web apps, data pipelines, scraping/automation, CLI tools, ML — **and for
+goal-shaped projects that aren't only code:** a personal brand, an outreach campaign, a content system, a
+launch. Pure Python 3, standard library only. Nothing to `pip install`.
 
 ---
 
@@ -84,6 +85,38 @@ VERDICT: ⛔ 1 BLOCKING issue(s) — do not build on this state. (1 advisory.)
 
 A blank digest means you're clear to build. A blocking issue means the next thing you'd do is based on a
 lie — and keel stops you *before* you do it.
+
+---
+
+## Bring a big fuzzy goal, not just a task
+
+The hardest projects start as an outcome you can't yet break down — *"build my personal brand," "reach
+1000 people," "make an animated site."* You don't know the layers yet. keel refuses to dive into
+execution: it decomposes the outcome into **checkpoints**, aligns each one with you through plain-language
+tradeoff choices, and records the shape as it forms — so you end up with exactly what you wanted, not
+something unaligned, even though you didn't know the decisions were decisions when you started.
+
+```console
+$ docs.py outcome set "build my personal brand on social media"
+$ docs.py contract check
+✗ OUTCOME NOT DECOMPOSED — has 0 checkpoints. Break it into aligned checkpoints before any build.
+
+# …after decomposing it, with you steering each choice:
+$ docs.py rehydrate
+--- ROADMAP: build my personal brand on social media ---
+   [x] 1. positioning / niche      choice: micro-niche: career-transition tech pros
+   [~] 2. target audience   <- YOU ARE HERE
+                                    choice: mid-career engineers eyeing a pivot, on LinkedIn
+   [ ] 3. content pillars
+   [ ] 4. platform choice
+   [ ] 5. cadence
+   [ ] 6. metrics
+   → next undecided checkpoint: #3 content pillars — align it before building on it
+```
+
+The roadmap lives in a committed, hand-editable `docs/roadmap.md`; a pivotal choice (your niche, your
+positioning) can be promoted to a durable, searchable decision record. Set `docs.py profile general` for
+non-code work.
 
 ---
 
