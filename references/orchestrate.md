@@ -3,12 +3,21 @@
 Loaded only when this session delegates to other agents/sessions. A solo session never loads this
 file — nothing here applies to one model doing its own work end to end.
 
-## Manager / worker split
+## Tier-relative manager / worker split
 
-You (the capable model) DESIGN the task and VERIFY the output. Cheaper/faster models do the
-expensive mechanical grunt: bulk extraction, repetitive edits across many files, running the same
-transform N times. The split is about cost, not trust — grunt work is cheap to redo, judgment
-is not.
+The split is **relative to YOUR lead model**, not to any fixed model. Ladder, best→cheapest:
+**fable/mythos > opus > sonnet > haiku**. Declare your lead with `docs.py route lead --model <you>`; keel
+derives the roles:
+- **Lead (you)** = orchestration, intelligence, and VERIFICATION — the expensive, high-value work.
+- **Worker = Sonnet** (the cheap capable tier; don't drop below it) = bulk extraction, repetitive edits,
+  running the same transform N times, wide research fan-out. Delegate it DOWN; don't spend lead tokens on it.
+- **Judge = Opus** (when the lead is above Opus; otherwise the lead itself) = verifies each worker return
+  before you accept it.
+- **Lead is Sonnet or lower** → no cheaper capable tier exists: do the grunt yourself, but still structure
+  and verify your own output. Delegation simply isn't available; nothing else changes.
+
+The split is about **cost, not trust** — grunt is cheap to redo, judgment is not. The user gets the **same
+quality of outcome, at lower token cost**; they never have to ask for it or see it happen.
 
 **Never delegate judgment.** Anything that requires interpreting ambiguity, choosing between
 tradeoffs, or deciding whether a result is actually correct stays with you. A worker that hits a

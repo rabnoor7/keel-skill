@@ -14,6 +14,13 @@ All notable changes to keel. Versions follow semver; `docs.py --version` reports
 - **Decompose-before-execute gate** — an outcome with zero checkpoints is a BLOCKING state in both
   `rehydrate` AND `contract check`, so a build cannot skip decomposition even under "just build it" pressure
   (fixes a real session where keel executed on a fuzzy brand goal instead of breaking it down first). `outcome clear` archives the roadmap and lifts the block if an outcome is abandoned.
+- **Tier-relative orchestration** (`route lead --model <you>`) — keel now derives the manager/worker
+  topology from YOUR lead model instead of hardcoding one: orchestration + intelligence + verification stay
+  on the lead; grunt/bulk-research delegates DOWN to Sonnet; a judge (Opus when the lead is above Opus, else
+  the lead) verifies worker output. Sonnet-lead = solo (verify your own). SKILL.md §5 makes this a required
+  reflex before a swarm; `contract check` prints a non-blocking cost hint naming grunt-shaped items to
+  delegate. **UX-invisible**: fully dormant unless a lead is declared (proven byte-identical rehydrate for
+  non-adopters) — same outcome quality, lower token cost.
 - **`general` profile** + broadened identity — keel now covers goal-shaped, not-only-code projects
   (personal brand, outreach, content, launch), not just software. SKILL.md gains an Outcome-Decomposition
   loop step (§0a); the install intro and README reflect the wider scope.

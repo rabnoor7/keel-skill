@@ -478,6 +478,13 @@ def cmd_rehydrate(a):
     print(f'\nPROFILE: {_read(PROFILE).strip() or "(unset — run: docs.py profile <name>)"}')
     mdirs = _memory_dirs()
     print('MEMORY tiers found: ' + (', '.join((os.path.relpath(d, ROOT) if d.startswith(ROOT) else d) for d in mdirs) or '(none)'))
+    _lead = _read(SESSION_MODEL).strip()  # dormant unless a lead is declared — no line for the 99% who don't
+    if _lead:
+        _r = _roles(_lead)
+        if _r and not _r['solo']:
+            print(f'LEAD: {_r["lead"]} — delegate grunt to {_r["grunt"]}, {_r["judge"]}-judge it, orchestrate here (same outcome, cheaper).')
+        elif _r:
+            print(f'LEAD: {_r["lead"]} (solo — no cheaper capable tier; verify your own output).')
 
     # OUTCOME DECOMPOSITION — no-op when docs/roadmap.md doesn't exist (every project that never runs
     # `docs.py outcome set` sees nothing here, ever). When an outcome IS set, surface where the roadmap
@@ -817,7 +824,9 @@ def cmd_contract(a):
         c = json.load(open(CONTRACT))
         fresh = (time.time() - c.get('ts', 0)) < (a.window or 3600)
         if c.get('approved') and fresh:
-            print('contract check: ✅ signed + fresh.'); return
+            print('contract check: ✅ signed + fresh.')
+            _routing_note(c.get('plan', ''))  # model-facing cost hint; never blocks the build
+            return
         print(f'contract check: ✗ approved={c.get("approved")} fresh={fresh} — do not build.'); sys.exit(1)
 
 
@@ -1502,6 +1511,56 @@ def cmd_accept(a):
             print(f'   □ {c}')
 
 
+# model tiers, best → cheapest (Fable/Mythos = the Claude 5 top tier, above Opus). Orchestration is
+# tier-RELATIVE to whatever the user's LEAD model is — never hardcoded to one model.
+MODEL_TIERS = ('fable', 'mythos', 'opus', 'sonnet', 'haiku')
+DEFAULT_GRUNT = 'scrape|extract|dedupe|normalize|backfill|migrate|bulk|re-run|batch|crawl|fetch|convert|reformat|boilerplate|repetitive'
+
+
+def _tier(name):
+    n = (name or '').lower()
+    return next((i for i, t in enumerate(MODEL_TIERS) if t in n), None)
+
+
+def _roles(lead):
+    """Derive the orchestration topology from the LEAD model — tier-relative, covers every case."""
+    li = _tier(lead)
+    if li is None:
+        return None
+    si, oi = MODEL_TIERS.index('sonnet'), MODEL_TIERS.index('opus')
+    solo = li >= si                                          # sonnet (or lower) lead: no cheaper capable worker
+    grunt = lead.lower() if solo else MODEL_TIERS[si]        # the 'sonnet' worker tier, else self
+    judge = MODEL_TIERS[oi] if li < oi else lead.lower()     # opus verifies when lead is above opus; else self
+    return {'lead': lead.lower(), 'grunt': grunt, 'judge': judge, 'solo': solo}
+
+
+def _routing_note(plan):
+    """Model-facing, non-blocking cost hint: if a lead is declared and a cheaper worker tier exists, name the
+    grunt-shaped plan items to delegate. Dormant unless the user declared a lead — zero user-facing change."""
+    sess = _read(SESSION_MODEL).strip()
+    roles = _roles(sess) if sess else None
+    if not roles or roles['solo']:
+        return
+    grunt = [l.strip()[:56] for l in plan.splitlines() if l.strip() and re.search(DEFAULT_GRUNT, l.lower())]
+    if grunt:
+        print(f'  · routing (cost): {len(grunt)} grunt-shaped item(s) — delegate to {roles["grunt"]} + '
+              f'{roles["judge"]}-judge the return; keep orchestration on {roles["lead"]}. Same result, cheaper.')
+
+
+def _print_topology(lead):
+    r = _roles(lead)
+    if not r:
+        print(f'route: unknown model tier "{lead}" — known tiers best→cheapest: {" > ".join(MODEL_TIERS)}'); return r
+    print(f'ORCHESTRATION TOPOLOGY (lead = {r["lead"]}):')
+    print(f'  orchestrate · intelligence · verify  → {r["lead"]}  (the expensive, high-value work stays here)')
+    if r['solo']:
+        print(f'  grunt / research                     → {r["grunt"]} (SOLO — no cheaper capable tier; still verify your OWN output)')
+    else:
+        print(f'  grunt / bulk research / mechanical   → {r["grunt"]} (delegate DOWN — cheap to redo, don\'t spend {r["lead"]} on it)')
+        print(f'  judge the grunt output before accept → {r["judge"]} (never rubber-stamp a worker\'s "done")')
+    return r
+
+
 def cmd_route(a):
     if a.action == 'set':
         if not (a.klass and a.keywords and a.model):
@@ -1513,34 +1572,41 @@ def cmd_route(a):
                 f.write('# Routing policy — task-class → model (codified once, never re-typed per session)\n\n')
             f.write(f'- {a.klass}: {a.keywords} -> {a.model}\n')
         print(f'route: {a.klass} ({a.keywords}) → {a.model}   [docs/routing.md]')
-    elif a.action == 'model':
+    elif a.action in ('model', 'lead'):
         if not a.model:
-            sys.exit('route model --model <name>  (declare what THIS session is running as)')
+            sys.exit('route lead --model <name>  (declare the LEAD model THIS session runs as)')
         _ensure(STATE); _ensure_keel_ignored()
         open(SESSION_MODEL, 'w').write(a.model)
-        print(f'session model: {a.model}')
+        print(f'lead model: {a.model}')
+        _print_topology(a.model)  # derive + show the tier-relative orchestration roles
     elif a.action == 'check':
-        rules = re.findall(r'^- (\w[\w-]*): (.+?) -> (\S+)$', _read(ROUTING), re.M)
-        if not rules:
-            print('route check: no routing policy recorded (docs/routing.md) — nothing to enforce.'); return
         sess = _read(SESSION_MODEL).strip()
         plan = (json.load(open(CONTRACT)).get('plan', '') if os.path.exists(CONTRACT) else '')
-        if not sess or not plan:
-            sys.exit('route check: needs a declared session model (`route model --model X`) and a set contract.')
+        rules = re.findall(r'^- (\w[\w-]*): (.+?) -> (\S+)$', _read(ROUTING), re.M)  # optional custom policy
+        if not sess:
+            print('route check: declare the lead model first — docs.py route lead --model <name>'); return
+        if not plan:
+            sys.exit('route check: needs a set contract (the plan whose items get routed).')
+        roles = _roles(sess)
         flags = []
         for line in plan.splitlines():
             low = line.strip().lower()
-            for klass, kws, model in rules:
-                if low and re.search(kws, low) and model.lower() != sess.lower():
-                    flags.append((line.strip()[:64], klass, model))
+            if not low:
+                continue
+            for klass, kws, model in rules:  # explicit policy wins
+                if re.search(kws, low) and model.lower() != sess.lower():
+                    flags.append((line.strip()[:60], klass, model)); break
+            else:  # built-in tier-relative default: grunt-shaped work should go DOWN to the worker tier
+                if roles and not roles['solo'] and re.search(DEFAULT_GRUNT, low):
+                    flags.append((line.strip()[:60], 'grunt', roles['grunt']))
         if flags:
-            print(f'ROUTE CHECK — session model "{sess}" vs policy (docs/routing.md):')
+            print(f'ROUTE CHECK — lead "{sess}":')
             for item, klass, model in flags[:8]:
-                print(f'   ✗ "{item}"  is {klass}-class → belongs on {model} (delegate or justify)')
-            print(f'{len(flags)} item(s) mis-routed. Honest limit: keel cannot switch the model — it detects '
-                  'and surfaces; delegate the flagged items to the right tier. (exit 1)')
+                print(f'   ✗ "{item}"  is {klass}-class → delegate to {model}, then judge its output')
+            print(f'{len(flags)} item(s) belong a tier DOWN. Honest limit: keel cannot switch the harness model — '
+                  'it detects + surfaces; delegate the flagged items and verify their return. (exit 1)')
             sys.exit(1)
-        print(f'route check: ✅ every contract item matches the policy for "{sess}".')
+        print(f'route check: ✅ every contract item is on the right tier for lead "{sess}".')
 
 
 
@@ -1968,7 +2034,7 @@ def main():
     p = sub.add_parser('match'); p.add_argument('query'); p.set_defaults(fn=cmd_match)
     p = sub.add_parser('accept'); p.add_argument('action', choices=['add', 'show', 'check'])
     p.add_argument('type'); p.add_argument('--criterion'); p.set_defaults(fn=cmd_accept)
-    p = sub.add_parser('route'); p.add_argument('action', choices=['set', 'model', 'check'])
+    p = sub.add_parser('route'); p.add_argument('action', choices=['set', 'model', 'lead', 'check'])
     p.add_argument('klass', nargs='?'); p.add_argument('--keywords'); p.add_argument('--model'); p.set_defaults(fn=cmd_route)
     p = sub.add_parser('critique'); p.add_argument('action', choices=['assume', 'research', 'alt', 'check'])
     p.add_argument('--claim'); p.add_argument('--bearing', choices=['load', 'minor']); p.add_argument('--status', choices=['untested', 'tested', 'user-confirmed'])

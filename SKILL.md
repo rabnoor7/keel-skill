@@ -164,11 +164,23 @@ anchor. Never make correctness depend on remembering to flush when context is mo
 **drafted** (`decision`/`journal --draft`) — they stage to `.keel/pending/` and land in `docs/` only when you
 approve on `hydrate`. Don't manufacture memory the user didn't approve. See `references/memory.md`.
 
-## 5 · Orchestrate (multi-agent work only)
-Delegate expensive/mechanical work to cheaper agents; you design and **verify their submissions
-field-level** — never rubber-stamp "done." Never delegate judgment. Coordinate parallel roles through
-the **append-only** whiteboard and resource `claim` locks (`docs.py whiteboard` / `claim`) — never a
-shared editable file. See `references/orchestrate.md`.
+## 5 · Orchestrate (multi-agent work only) — tier-relative, and it must reflex
+Before you fan out a swarm or delegate mechanical work, set the **tier-relative topology** — this is a
+required reflex, not optional, whenever a cheaper capable tier exists. The result the user gets is
+**identical quality — just cheaper**; this is a pure cost optimization the user never has to see or ask for.
+- **Declare your lead** (`docs.py route lead --model <you>`) so keel derives roles. The ladder is
+  fable/mythos > opus > sonnet > haiku. **Orchestration, intelligence, and verification stay on the LEAD
+  (you).** **Grunt — bulk research, extraction, repetitive edits, running one transform N times — goes DOWN
+  to Sonnet** (the worker tier; don't drop below Sonnet, and don't spend lead tokens on it). **A JUDGE
+  (Opus when the lead is above Opus, else the lead) verifies the worker's return** before you accept it.
+- If the lead **is** Sonnet (or lower), there's no cheaper capable tier — do the grunt yourself, but still
+  structure and **verify your own output**; delegation just isn't available.
+- **Never delegate judgment.** Anything requiring interpreting ambiguity, choosing tradeoffs, or deciding
+  correctness stays with the lead. **Never rubber-stamp a worker's "done"** — verify field-level.
+- `docs.py route check` (or the routing note on `contract check`) names the grunt-shaped plan items to hand
+  down — advisory only; keel can't switch the harness model, so it detects + surfaces, never blocks.
+Coordinate parallel roles through the **append-only** whiteboard and resource `claim` locks
+(`docs.py whiteboard` / `claim`) — never a shared editable file. See `references/orchestrate.md`.
 
 ## Precedence (whose convention wins)
 recorded decisions (`docs/`) → existing code → user global prefs → skill defaults. Your own opinions
