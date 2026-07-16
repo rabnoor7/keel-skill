@@ -475,6 +475,12 @@ def cmd_rehydrate(a):
         for r in esc_open[:4]:
             print(f'    #{r["id"]} [{r.get("because")}] {r.get("question", "")[:88]}')
         print('    → docs.py escalate resolve <id> --choice ...')
+    disc_open = [r for r in _load_jsonl(DISCUSS) if r.get('status') == 'open']
+    if disc_open:  # advisory by design: session start orients; the hard gate lives in `contract check`
+        print(f'\n[~] DISCUSSION MODE — {len(disc_open)} thread(s) still being shaped (builds gate on these):')
+        for r in disc_open[:4]:
+            print(f'    #{r["id"]} {r.get("thread", "")[:88]}')
+        print('    → converge through cascading choices, then: docs.py discuss close <id> [--choice "..."]')
     print(f'\nPROFILE: {_read(PROFILE).strip() or "(unset — run: docs.py profile <name>)"}')
     mdirs = _memory_dirs()
     print('MEMORY tiers found: ' + (', '.join((os.path.relpath(d, ROOT) if d.startswith(ROOT) else d) for d in mdirs) or '(none)'))
@@ -814,6 +820,11 @@ def cmd_contract(a):
         if esc_open:
             print(f'contract check: ✗ BLOCKED-ON-USER — {len(esc_open)} open escalation(s) (#'
                   + ', #'.join(str(r["id"]) for r in esc_open[:4]) + '). Resolve before building.'); sys.exit(1)
+        disc_open = [r for r in _load_jsonl(DISCUSS) if r.get('status') == 'open']
+        if disc_open:  # T1 teeth: shaping-in-progress gates the BUILD moment, and only the build moment
+            print(f'contract check: ✗ DISCUSSION OPEN — {len(disc_open)} thread(s) still being shaped (#'
+                  + ', #'.join(str(r["id"]) for r in disc_open[:4])
+                  + '). Converge each with the user, then: docs.py discuss close <id> [--choice "..."]'); sys.exit(1)
         rm = _roadmap()  # the teeth: a declared outcome with no checkpoint-map cannot be built into directly
         if rm and rm.get('north_star') and not rm.get('checkpoints'):
             print(f'contract check: ✗ OUTCOME NOT DECOMPOSED — "{rm["north_star"][:60]}" has 0 checkpoints. '
@@ -1096,6 +1107,7 @@ INBOX = os.path.join(STATE, 'inbox')
 STANCE = os.path.join(STATE, 'stance.json')
 ESCALATIONS = os.path.join(STATE, 'escalations.jsonl')
 ASKS = os.path.join(STATE, 'asks.jsonl')
+DISCUSS = os.path.join(STATE, 'discuss.jsonl')
 
 
 def _run_state(rid):
@@ -1334,6 +1346,50 @@ def cmd_escalate(a):
             _emit_record('decision', f'{n:04d}-{_slug(a.to_decision)}.md', f'# {n:04d} — {a.to_decision}\n\n{body}\n',
                          DEC, False, a.to_decision, {'n': n})
         print(f'escalation #{a.id} {tgt["status"]}' + (f' → choice: {a.choice}' if a.choice else ''))
+
+
+def cmd_discuss(a):
+    """Discussion Mode (T1). An OPEN thread = an outcome-shaping direction still being shaped WITH the user
+    through cascading, steelmanned choices — augmentation, not automation: the goal of an option round is
+    the user's clarity, not their selection, and the free text they attach to a pick is the yield, never a
+    footnote. Teeth live at the BUILD moment only: `contract check` refuses while any thread is open;
+    rehydrate surfaces open threads advisory-only (session start is orientation, not obstruction). Exit is
+    PER-THREAD: close the converged thread, others stay open; a settled close is never re-asked.
+    Honest limits: opening/closing is agent judgment (doctrine-primary detection, SKILL.md §0b), and raw
+    Write/Edit/Bash bypass this like every gate — this arms the same proven plumbing as escalations."""
+    if a.action == 'open':
+        if not a.thread:
+            sys.exit('discuss open: needs --thread "<the direction being shaped>"')
+        rows = _load_jsonl(DISCUSS)
+        did = max((r.get('id', 0) for r in rows), default=0) + 1
+        _append_jsonl(DISCUSS, {'id': did, 'thread': a.thread, 'status': 'open', 'ts': time.time()})
+        print(f'DISCUSS #{did} OPEN — "{a.thread}". Shaping mode: decompose into steelmanned either/or'
+              f' choices, one fork at a time; harvest every attachment the user adds to an answer.'
+              f'\n  builds gate on this until it converges → docs.py discuss close {did} [--choice "..."]')
+    elif a.action == 'list':
+        rows = [r for r in _load_jsonl(DISCUSS) if r.get('status') == 'open']
+        if not rows:
+            print('(no open discussion threads)')
+        for r in rows:
+            print(f'  #{r["id"]} {r.get("thread", "")[:90]}')
+    elif a.action == 'close':
+        if a.id is None:
+            sys.exit('discuss close: needs the thread id (see: discuss list)')
+        with _FileLock(DISCUSS):
+            rows = _load_jsonl(DISCUSS)
+            tgt = next((r for r in rows if r.get('id') == a.id and r.get('status') == 'open'), None)
+            if not tgt:
+                sys.exit(f'no open discussion #{a.id}')
+            tgt['status'] = 'closed'; tgt['choice'] = a.choice; tgt['closed_ts'] = time.time()
+            _atomic_write(DISCUSS, ''.join(json.dumps(r) + '\n' for r in rows))
+        if a.to_decision:  # promote the converged choice to a durable, searchable ADR (same move as escalate)
+            n = _next_adr()
+            body = (f'## Context\nDiscussion #{a.id}: {tgt.get("thread")}\n\n'
+                    f'## Decision\n{a.choice or "(converged in discussion)"}\n')
+            _emit_record('decision', f'{n:04d}-{_slug(a.to_decision)}.md',
+                         f'# {n:04d} — {a.to_decision}\n\n{body}\n', DEC, False, a.to_decision, {'n': n})
+        print(f'discussion #{a.id} closed' + (f' → choice: {a.choice}' if a.choice else '')
+              + ' — this thread may build. (settled: do not re-ask it)')
 
 
 ASKS_MD = os.path.join(DOCS, 'asks.md')  # committed + human-editable: asks are project memory, not tool state
@@ -2023,6 +2079,9 @@ def main():
     p = sub.add_parser('stance'); p.add_argument('action', choices=['set', 'clear', 'show'])
     p.add_argument('name', nargs='?', choices=['freeze', 'confirm'])
     p.add_argument('--memory', choices=['confirm', 'silent']); p.add_argument('--note'); p.set_defaults(fn=cmd_stance)
+    p = sub.add_parser('discuss'); p.add_argument('action', choices=['open', 'close', 'list'])
+    p.add_argument('id', nargs='?', type=int); p.add_argument('--thread'); p.add_argument('--choice')
+    p.add_argument('--to-decision', dest='to_decision'); p.set_defaults(fn=cmd_discuss)
     p = sub.add_parser('escalate'); p.add_argument('action', choices=['raise', 'list', 'resolve', 'retract'])
     p.add_argument('id', nargs='?', type=int); p.add_argument('--question'); p.add_argument('--domain')
     p.add_argument('--because', choices=['pivotal', 'irreversible', 'cost']); p.add_argument('--options')

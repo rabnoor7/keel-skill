@@ -61,6 +61,28 @@ positioning) can be promoted to a durable, searchable ADR: `docs.py checkpoint c
 --to-decision "<title>"`. A scoped, already-clear task skips all of this — this is for OUTCOMES, not
 routine feature work.
 
+## 0b · Discussion Mode — when a NEW direction lands mid-session (auto + manual)
+§0a's reflex, generalized to **any point in a session**: whenever an input is **outcome-shaping** — it
+changes what gets built, whose call it is, or adds a direction/idea/question to the project — **arm it**:
+`docs.py discuss open --thread "<the direction>"`, then shape it WITH the user before building on it.
+(The user saying "discuss" always arms it manually.) While a thread is open:
+- **Augmentation, not automation.** The goal of an option round is the **user's clarity, not their
+  selection**. Decompose into steelmanned, genuinely-different either/or choices — plain language,
+  recommendation-first, **one coherent fork at a time**; each answer typically opens the next fork.
+- **The attachment is the yield.** Users routinely answer a pick PLUS free text — that prose is the
+  payload, never a footnote. Every attachment becomes its own tracked thread (surface it back, `discuss
+  open` it, or fold it in explicitly) — resolving one silently ("my call") is the corpus's worst failure.
+- **Narrow-technical forks are NOT user questions** — resolve them yourself and state it (§2's necessity
+  test). Decompose loudly exactly where shaping happens; never manufacture ceremony on implementation
+  detail. Pacing: mid-batch "continue / too much left" means **denser batching, never abandonment**.
+- **Exit is per-thread.** A converged thread (a clear pick / "go" on the scoped thing) closes NOW:
+  `docs.py discuss close <id> [--choice "..."] [--to-decision "<title>"]` — the choice can promote to a
+  durable ADR. **Settled is settled: never re-ask a closed thread** (re-confirming after a go is itself
+  a failure). Other threads stay open; builds gate on them.
+- **Teeth (honest scope):** `contract check` **refuses while any thread is open** (exit 1, names them);
+  `rehydrate` surfaces open threads **advisory-only**. Detection itself is THIS doctrine — the code
+  can't see the conversation; arming is your reflex, and skipping it is the failure keel exists to stop.
+
 ## 1 · Detect the profile
 `docs.py profile` — confirm/set the project profile: **web-app | data-pipeline | automation |
 cli-tool | ml**. Load only that profile's playbook from `profiles/`. **One profile per project** — on a
@@ -193,7 +215,8 @@ layout · feedback · run (start/mark/status/resume/close) · sink (add/status/i
 escalate (raise/resolve) · ask (add/bump/close --evidence) · match · preserve (snapshot/check) ·
 orphans · smoke (set/run/gate) · accept (add/show/check) · route (set/model/check) ·
 critique (assume/research/alt/check) · coverage (init/check) · livetest (arm/confirm/reject) ·
-handoff (send/list/ack) · outcome (set/show) · checkpoint (add/status/choice/list)`
+handoff (send/list/ack) · outcome (set/show) · checkpoint (add/status/choice/list) ·
+discuss (open/close/list)`
 — run `python3 scripts/docs.py --help` · `docs.py --version` reports the installed version.
 
 ## Standing defaults

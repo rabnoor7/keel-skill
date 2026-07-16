@@ -97,7 +97,7 @@ def main():
         except SystemExit:
             pass
     helptext = buf.getvalue()
-    for cmdname in ('rehydrate', 'layout', 'feedback', 'run', 'sink', 'stance', 'escalate', 'ask'):
+    for cmdname in ('rehydrate', 'layout', 'feedback', 'run', 'sink', 'stance', 'escalate', 'ask', 'discuss'):
         if cmdname not in helptext:
             fails.append(f'command "{cmdname}" missing from --help (parser wiring regressed)')
 
@@ -112,6 +112,40 @@ def main():
         fails.append(f'_roadmap parse: got {rm} (expected north_star + 2 checkpoints)')
     elif [c['status'] for c in rm['checkpoints']] != ['reached', 'active']:
         fails.append('_roadmap: checkpoint statuses mis-parsed')
+
+    # T1 · Discussion Mode locks — teeth at the BUILD moment only, advisory at rehydrate, per-thread exit.
+    import types
+    def _rc(fn, **kw):
+        buf2 = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf2), contextlib.redirect_stderr(buf2):
+                fn(types.SimpleNamespace(**kw))
+            return 0, buf2.getvalue()
+        except SystemExit as e:
+            return (e.code if isinstance(e.code, int) else 1), buf2.getvalue()
+    _c = dict(content=None, from_file=None, approved=False, window=None)
+    _rc(docs.cmd_contract, action='set', **{**_c, 'content': 'plan', 'approved': True})
+    rc, out = _rc(docs.cmd_contract, action='check', **_c)
+    if rc != 0:
+        fails.append(f'discuss: contract check must pass with no open thread (rc={rc}: {out.strip()[-100:]})')
+    _rc(docs.cmd_discuss, action='open', thread='shape the access layer', id=None, choice=None, to_decision=None)
+    rc, out = _rc(docs.cmd_contract, action='check', **_c)
+    if rc == 0 or 'DISCUSSION OPEN' not in out:
+        fails.append('discuss: an open thread must BLOCK contract check (build-moment teeth)')
+    # rehydrate must SURFACE the thread but stay advisory for it (rc not asserted here — this fixture
+    # holds intentional contradictions that legitimately make rehydrate blocking on their own)
+    rc, out = _rc(docs.cmd_rehydrate, full=False)
+    if 'DISCUSSION MODE' not in out:
+        fails.append('discuss: rehydrate must surface open threads')
+    if 'DISCUSSION' in ''.join(x for x in out.splitlines() if x.startswith('[B')):
+        fails.append('discuss: open threads must never be a rehydrate BLOCKING item (advisory only)')
+    rc, _ = _rc(docs.cmd_discuss, action='close', id=1, choice='FastAPI', to_decision=None, thread=None)
+    rc, out = _rc(docs.cmd_contract, action='check', **_c)
+    if rc != 0:
+        fails.append('discuss: closing the last open thread must release the build gate')
+    rc, _ = _rc(docs.cmd_discuss, action='close', id=1, choice=None, to_decision=None, thread=None)
+    if rc == 0:
+        fails.append('discuss: re-closing a settled thread must refuse (settled is settled)')
 
     if fails:
         print('SELFTEST FAILED:')
