@@ -106,10 +106,37 @@ CONTRA_B = re.compile(rf'{_ADRREF}\s+(?:is\s+|was\s+|now\s+){{0,3}}(?:supersed\w
 # so it fires on first use after an install and self-suppresses forever after — per install, not per project.
 SKILL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INTRO_MARKER = os.path.join(SKILL_ROOT, '.introduced')
+# Point 2 (doctrine-staleness): the last keel version that ran on this install. A session loads SKILL.md
+# ONCE and won't act on new behavior until /keel is re-invoked, so when the installed version moves past
+# this marker we say so once — the missing "keel updated" signal. Lives with the skill (per install).
+LAST_SEEN = os.path.join(SKILL_ROOT, '.last_seen')
 try:
     KEEL_VERSION = open(os.path.join(SKILL_ROOT, 'VERSION')).read().strip()
 except OSError:
     KEEL_VERSION = 'unknown'
+
+
+def _version_notice():
+    """Return a one-time 'keel updated X → Y' notice if the install moved since it last ran here, and
+    advance the marker. First run on an install is SILENT (no prior version to compare) so fresh state is
+    byte-identical to before this existed; 'unknown' version never writes or notices."""
+    try:
+        seen = open(LAST_SEEN).read().strip() if os.path.exists(LAST_SEEN) else None
+    except OSError:
+        seen = None
+    notice = None
+    if seen and seen != KEEL_VERSION and KEEL_VERSION != 'unknown':
+        # State only what keel KNOWS (the install moved); it cannot know whether this session loaded the
+        # doctrine, so the reload is CONDITIONAL — no asserting session history a stateless CLI can't see.
+        notice = (f'>>> keel updated {seen} → {KEEL_VERSION} since you last ran it — behavior may have changed.\n'
+                  f'>>> If keel\'s doctrine loaded earlier this session, re-invoke /keel to refresh it. Changed: CHANGELOG.md')
+    if seen != KEEL_VERSION and KEEL_VERSION != 'unknown':
+        try:
+            with open(LAST_SEEN, 'w') as fh:
+                fh.write(KEEL_VERSION)
+        except OSError:
+            pass
+    return notice
 
 
 def _now(): return datetime.datetime.now()
@@ -508,6 +535,9 @@ def cmd_rehydrate(a):
     if _maybe_intro():
         print()
     print('=' * 70); print(f'KEEL REHYDRATE — digest across all tiers  (keel {KEEL_VERSION})'); print('=' * 70)
+    _vn = _version_notice()  # point 2: surface a version bump once + nudge a /keel reload (staleness signal)
+    if _vn:
+        print('\n' + _vn)
     st = _stance()
     if st:
         st['rehydrates_since'] = st.get('rehydrates_since', 0) + 1

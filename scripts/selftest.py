@@ -259,6 +259,31 @@ def main():
         fails.append('status: a consistent roadmap must NOT report a contradiction (cry-wolf)')
     os.remove(os.path.join(root, 'docs', 'roadmap.md'))
 
+    # Point 2 · version-change notice: when the install moves past .last_seen, rehydrate says so ONCE and
+    # advances the marker; a fresh install (no marker) is SILENT so nothing regresses byte-parity; the same
+    # version never re-notices; 'unknown' neither notices nor writes. The missing "keel updated" signal.
+    docs.LAST_SEEN = os.path.join(root, '.last_seen_test')
+    _saved_ver = docs.KEEL_VERSION
+    if os.path.exists(docs.LAST_SEEN):
+        os.remove(docs.LAST_SEEN)
+    docs.KEEL_VERSION = '9.9.9'
+    if docs._version_notice() is not None:
+        fails.append('version-notice: first run on an install (no marker) must be SILENT')
+    if open(docs.LAST_SEEN).read().strip() != '9.9.9':
+        fails.append('version-notice: first run must still record the current version to the marker')
+    if docs._version_notice() is not None:
+        fails.append('version-notice: the same version must not re-notice (one-time per bump)')
+    docs.KEEL_VERSION = '9.9.10'
+    _n = docs._version_notice()
+    if not _n or 'keel updated 9.9.9 → 9.9.10' not in _n or '/keel' not in _n:
+        fails.append('version-notice: a version bump must announce X → Y and nudge a /keel reload')
+    if open(docs.LAST_SEEN).read().strip() != '9.9.10':
+        fails.append('version-notice: the marker must advance to the new version after the notice')
+    docs.KEEL_VERSION = 'unknown'
+    if docs._version_notice() is not None or open(docs.LAST_SEEN).read().strip() != '9.9.10':
+        fails.append("version-notice: an 'unknown' version must neither notice nor overwrite the marker")
+    docs.KEEL_VERSION = _saved_ver
+
     # Wave A · cwd/ROOT anchor (the silent-memory-loss fix) + journal forgiveness.
     _here = os.getcwd()
     projp = tempfile.mkdtemp(prefix='keel-root-'); os.makedirs(os.path.join(projp, '.keel'))
