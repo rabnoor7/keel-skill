@@ -2,6 +2,28 @@
 
 All notable changes to keel. Versions follow semver; `docs.py --version` reports the installed version.
 
+## [1.3.2] — 2026-07-17
+
+### Added (integrity advisories — keel now catches when it was silently wrong about your project)
+- **Roadmap self-contradiction detector.** `rehydrate` flags any checkpoint left `undecided` that already
+  carries a recorded choice — the "roadmap lies live" symptom (a status write dropped, e.g. lost from an
+  `&&` chain when an earlier command exited non-zero). Advisory, never blocking; precise by construction
+  (undecided + has-choice), so no cry-wolf. Caught a real instance on a live project's roadmap.
+- **Deliverable-tracker health.** If a `verify` workflow tracks a deliverable dir that doesn't exist, its
+  staleness net is silently inert (the hash is empty both sides). `rehydrate` now flags this — but ONLY when
+  a verify stamp exists, so a project not using verify is never nagged. New `docs.py deliverables [dir …]`
+  shows/sets which dirs `verify` watches (default `data/`), so you can point it at your real output.
+- **Multi-part fidelity for Discussion Mode.** `discuss open --thread A --thread B …` is repeatable — one
+  call arms every part of a multi-part input as a set, and the build stays gated until EACH is closed, so a
+  numbered part can't quietly evaporate ("answered 3 things, only 1 got tracked"). The breakdown is still the
+  agent's judgment (keel can't see the conversation); this makes it durable + gated, not automatic.
+
+### Compatibility
+- **Byte-identical to 1.3.1** for any project without a self-contradicting roadmap and without a verify-tracked
+  missing dir — proven on real projects (one byte-identical, one where both detectors correctly surfaced real
+  latent bugs). Additive advisories only; nothing new blocks. Each behavior locked by a `selftest.py`
+  assertion, including cry-wolf guards (a consistent roadmap and a non-verify project stay silent).
+
 ## [1.3.1] — 2026-07-17
 
 ### Fixed (honesty pass — three behaviors the code didn't actually do, found by a claims-vs-code audit)
