@@ -97,7 +97,7 @@ def main():
         except SystemExit:
             pass
     helptext = buf.getvalue()
-    for cmdname in ('rehydrate', 'layout', 'feedback', 'run', 'sink', 'stance', 'escalate', 'ask', 'discuss'):
+    for cmdname in ('rehydrate', 'layout', 'feedback', 'run', 'sink', 'stance', 'escalate', 'ask', 'discuss', 'status'):
         if cmdname not in helptext:
             fails.append(f'command "{cmdname}" missing from --help (parser wiring regressed)')
 
@@ -222,6 +222,22 @@ def main():
     rc, out = _rc(docs.cmd_contract, action='check', content=None, from_file=None, approved=False, window=None)
     if rc == 0:
         fails.append('T6 discuss: closing ONE of three parts must not release the gate (2 still open)')
+
+    # T8 · status is a pure READOUT — clean panel + one-line form, and it NEVER gates (always exit 0),
+    # even under a freeze/blocking state that makes rehydrate/contract exit non-zero.
+    rc, out = _rc(docs.cmd_status, line=False)
+    if rc != 0 or 'IN MEMORY' not in out or 'OPEN NOW' not in out:
+        fails.append(f'status: full panel must exit 0 and show IN MEMORY + OPEN NOW (rc={rc})')
+    rc, out = _rc(docs.cmd_status, line=True)
+    if rc != 0 or out.count('\n') != 1 or not out.startswith('▸'):
+        fails.append(f'status --line: must be a single line starting with ▸ (rc={rc}, lines={out.count(chr(10))})')
+    open(docs.STANCE, 'w').write(_json.dumps({'name': 'freeze', 'freeze': True}))  # blocking state...
+    rc, out = _rc(docs.cmd_status, line=False)
+    if rc != 0:
+        fails.append('status: must stay a readout (exit 0) even under an active freeze — it never gates')
+    if 'FREEZE' not in out:
+        fails.append('status: an active freeze must show in the panel')
+    os.remove(docs.STANCE)
 
     if fails:
         print('SELFTEST FAILED:')

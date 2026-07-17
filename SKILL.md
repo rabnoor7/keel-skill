@@ -88,6 +88,23 @@ changes what gets built, whose call it is, or adds a direction/idea/question to 
   `rehydrate` surfaces open threads **advisory-only**. Detection itself is THIS doctrine — the code
   can't see the conversation; arming is your reflex, and skipping it is the failure keel exists to stop.
 
+## 0c · Visibility — let the user SEE keel is alive and what it captured
+The #1 user complaint is *"I can't tell keel is running in the background or what it noted."* Two surfaces,
+one truth (`docs.py status` computes both from disk — never a stored number). This is passive REPORTING —
+never a question, never a special mode; keep it general (no different behavior when "deep" in something).
+- **Presence line (frequent, tiny).** On a turn where keel actually **captured** something (a decision,
+  journal, discuss thread, checkpoint) OR has open/blocking state, surface a compact line so the user sees
+  it's live and *what* it caught — e.g. `▸ keel · noted: decision "access-layer" · 14 in memory · 1 thread
+  open`. Get the standing totals from `docs.py status --line`; name what you recorded THIS turn yourself
+  (keel has no "turn" concept). On a truly quiet turn, stay silent — don't manufacture noise.
+- **Status panel (infrequent, dissociated).** `docs.py status` prints the clean full readout (in-memory ·
+  open-now). Show it **on demand** (the user asks "keel status" / "what's in memory") **inline in the same
+  chat** — never make them fork a chat to see state (a fork is a stale snapshot). Also surface it **after a
+  heavier run or a milestone** (a `run` closes, a phase is reached, a `verify` passes) — the natural "here's
+  where we stand" beat. Do NOT print the full panel every turn — that's the line's job; keep the two apart.
+- Honest limit: "after a heavy run" is your judgment (keel can't see the conversation). `status` gives the
+  facts; when to surface the big panel is the same doctrine reflex as everything else here.
+
 ## 1 · Detect the profile
 `docs.py profile` — confirm/set the project profile: **web-app | data-pipeline | automation |
 cli-tool | ml**. Load only that profile's playbook from `profiles/`. **One profile per project** — on a
@@ -221,7 +238,8 @@ escalate (raise/resolve) · ask (add/bump/close --evidence) · match · preserve
 orphans · smoke (set/run/gate) · accept (add/show/check) · route (set/model/check) ·
 critique (assume/research/alt/check) · coverage (init/check) · livetest (arm/confirm/reject) ·
 handoff (send/list/ack) · outcome (set/show) · checkpoint (add/status/choice/list) ·
-discuss (open [--thread repeatable] /close/list) · deliverables (show/set — what verify tracks for staleness)`
+discuss (open [--thread repeatable] /close/list) · deliverables (show/set — what verify tracks for staleness) ·
+status ([--line] — the clean visibility panel: what's in memory + what's open; a readout, never gates)`
 — run `python3 scripts/docs.py --help` · `docs.py --version` reports the installed version.
 
 ## Standing defaults

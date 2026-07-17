@@ -1374,6 +1374,76 @@ def cmd_escalate(a):
         print(f'escalation #{a.id} {tgt["status"]}' + (f' → choice: {a.choice}' if a.choice else ''))
 
 
+def cmd_status(a):
+    """The clean, glanceable VISIBILITY panel (T8): what keel HAS and what's OPEN for this project, always
+    recomputed from disk — a lie-detector, never a stored/cached number. A pure readout: it NEVER gates,
+    always exits 0 (rehydrate stays the heavy session-start digest that can block). `--line` prints the
+    one-line ambient form the agent surfaces on capture-turns; the full panel is on-demand / after heavy runs.
+    Both are views of the SAME truth, so they can't disagree."""
+    ver = KEEL_VERSION
+    prof = _read(PROFILE).strip() or '(unset)'
+    decs = _dec_entries()
+    js = _journals_sorted()
+    rm = _roadmap()
+    asks_open = [x for x in _load_asks() if x['status'] == 'open']
+    disc_open = [r for r in _load_jsonl(DISCUSS) if r.get('status') == 'open']
+    esc_open = [r for r in _load_jsonl(ESCALATIONS) if r.get('status') == 'open']
+    st = _stance()
+    contract = json.load(open(CONTRACT)) if os.path.exists(CONTRACT) else None
+    verify = json.load(open(VERIFY_STAMP)) if os.path.exists(VERIFY_STAMP) else None
+    phases = ''
+    if rm and rm.get('checkpoints'):
+        tag = {'reached': 'x', 'active': '~', 'undecided': ' '}
+        bar = ''.join('[' + tag.get(c['status'], ' ') + ']' for c in rm['checkpoints'])
+        here = next((c for c in rm['checkpoints'] if c['status'] == 'active'), None)
+        phases = bar + (f'  → you are here: #{here["n"]} {here["title"][:38]}' if here else '')
+
+    if getattr(a, 'line', False):  # the ambient one-liner the agent surfaces when keel captured something
+        bits = [f'keel {ver}']
+        if decs: bits.append(f'{len(decs)} decision(s)')
+        if disc_open: bits.append(f'{len(disc_open)} thread(s) open')
+        if rm and rm.get('checkpoints'):
+            bits.append(f'phase {sum(1 for c in rm["checkpoints"] if c["status"] == "reached")}/{len(rm["checkpoints"])}')
+        if st and st.get('freeze'): bits.append('FROZEN')
+        if esc_open: bits.append(f'{len(esc_open)} blocked-on-you')
+        print('▸ ' + ' · '.join(bits) + '   → `keel status` for the full picture')
+        return
+
+    W = 64
+    print('─' * W)
+    print(f'keel status · {os.path.basename(ROOT) or "project"}')
+    print(f'keel {ver} · profile: {prof}')
+    print('\nIN MEMORY')
+    print(f'  decisions  {len(decs):>3}' + (f'   latest: {decs[-1]["title"][:44]}' if decs else '   (none yet)'))
+    print(f'  journal    {len(js):>3}' + (f'   latest: {os.path.basename(js[-1])[:44]}' if js else '   (none yet)'))
+    if rm:
+        print(f'  roadmap        {(rm["north_star"] or "(no north star)")[:44]}')
+        if phases: print(f'                 {phases}')
+    if asks_open: print(f'  asks       {len(asks_open):>3}   open question(s)')
+    print('\nOPEN NOW')
+    opened = False
+    if disc_open:
+        opened = True
+        print(f'  discuss    {len(disc_open)} being shaped: ' + '; '.join(r.get('thread', '')[:32] for r in disc_open[:3]))
+    if esc_open:
+        opened = True
+        print(f'  escalation {len(esc_open)} BLOCKED-ON-YOU (#' + ', #'.join(str(r['id']) for r in esc_open[:4]) + ')')
+    if st:
+        opened = True
+        print(f'  stance     {st["name"]}' + (' — FREEZE: no builds/landings' if st.get('freeze') else ''))
+    if contract:
+        opened = True
+        fresh = (time.time() - contract.get('ts', 0)) < 3600
+        print(f'  contract   {"approved" if contract.get("approved") else "unapproved"}, {"fresh" if fresh else "stale"}')
+    if verify:
+        opened = True
+        print(f'  verify     last audit: {verify.get("result", "?")}')
+    if not opened:
+        print('  (nothing open — clean)')
+    print('\n→ full digest + any gates: docs.py rehydrate')
+    print('─' * W)
+
+
 def cmd_deliverables(a):
     """Show or set which dir(s) hold the FINAL deliverables that `verify` tracks for staleness (default: data/).
     Repoint when your outputs live elsewhere (a service dir, a db) so the staleness safety-net actually fires
@@ -2132,6 +2202,7 @@ def main():
     p.add_argument('id', nargs='?', type=int); p.add_argument('--thread', action='append'); p.add_argument('--choice')
     p.add_argument('--to-decision', dest='to_decision'); p.set_defaults(fn=cmd_discuss)
     p = sub.add_parser('deliverables'); p.add_argument('dirs', nargs='*'); p.set_defaults(fn=cmd_deliverables)
+    p = sub.add_parser('status'); p.add_argument('--line', action='store_true'); p.set_defaults(fn=cmd_status)
     p = sub.add_parser('escalate'); p.add_argument('action', choices=['raise', 'list', 'resolve', 'retract'])
     p.add_argument('id', nargs='?', type=int); p.add_argument('--question'); p.add_argument('--domain')
     p.add_argument('--because', choices=['pivotal', 'irreversible', 'cost']); p.add_argument('--options')
