@@ -94,9 +94,12 @@ one truth (`docs.py status` computes both from disk — never a stored number). 
 never a question, never a special mode; keep it general (no different behavior when "deep" in something).
 - **Presence line (frequent, tiny).** On a turn where keel actually **captured** something (a decision,
   journal, discuss thread, checkpoint) OR has open/blocking state, surface a compact line so the user sees
-  it's live and *what* it caught — e.g. `▸ keel · noted: decision "access-layer" · 14 in memory · 1 thread
-  open`. Get the standing totals from `docs.py status --line`; name what you recorded THIS turn yourself
-  (keel has no "turn" concept). On a truly quiet turn, stay silent — don't manufacture noise.
+  it's live and *what* it caught — e.g. `▸ keel · noted: thread "referral-program" (gates builds) · 14 in
+  memory · 1 thread open`. Get the standing totals from `docs.py status --line`. **Name only what's
+  contextually LIVE** — a newly-opened thread that now gates builds, a blocking state, or a capture tied to
+  what the user is actually discussing this turn; let *other* records (a decision unrelated to the current
+  exchange) roll into the totals COUNT rather than being named — naming an off-topic capture reads as a
+  non-sequitur ("wait, when did we decide that?"). On a truly quiet turn, stay silent — don't manufacture noise.
 - **Status panel (infrequent, dissociated).** `docs.py status` prints the clean full readout (in-memory ·
   open-now). Show it **on demand** (the user asks "keel status" / "what's in memory") **inline in the same
   chat** — never make them fork a chat to see state (a fork is a stale snapshot). Also surface it **after a
