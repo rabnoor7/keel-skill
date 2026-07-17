@@ -147,6 +147,35 @@ def main():
     if rc == 0:
         fails.append('discuss: re-closing a settled thread must refuse (settled is settled)')
 
+    # T2 · FALSE-claim fixes locked forever (1.3.1):
+    import json as _json
+    docs._ensure(docs.STATE)
+    # #1 a REJECTED live test must keep `verify done` blocked — the reject-path bug (was: only 'handed_off').
+    open(docs.VERIFY_STAMP, 'w').write(_json.dumps({'result': 'pass', 'ts': 0, 'deliverables': docs._deliverable_hash()}))
+    open(docs.LIVETEST, 'w').write(_json.dumps({'state': 'handed_off'}))
+    rc, out = _rc(docs.cmd_verify, action='done')
+    if rc == 0:
+        fails.append('livetest: a HANDED-OFF live test must block verify done')
+    open(docs.LIVETEST, 'w').write(_json.dumps({'state': 'rejected'}))
+    rc, out = _rc(docs.cmd_verify, action='done')
+    if rc == 0 or 'REJECTED' not in out:
+        fails.append('livetest: a REJECTED live test must keep verify done BLOCKED (the reject-path bug)')
+    open(docs.LIVETEST, 'w').write(_json.dumps({'state': 'confirmed'}))
+    rc, out = _rc(docs.cmd_verify, action='done')
+    if rc != 0:
+        fails.append('livetest: a CONFIRMED live test must UNBLOCK verify done')
+    os.remove(docs.LIVETEST)
+    # #2 route check is ADVISORY — flags mis-routed items loudly but exits 0 ("detects + surfaces, never blocks").
+    open(docs.SESSION_MODEL, 'w').write('opus')
+    _json.dump({'plan': 'scrape 500 vendor pages and dedupe the rows', 'hash': 'x', 'ts': 0, 'approved': True},
+               open(docs.CONTRACT, 'w'))
+    rc, out = _rc(docs.cmd_route, action='check')
+    if 'ROUTE CHECK' not in out:
+        fails.append('route check: must still surface mis-routed items loudly')
+    if rc != 0:
+        fails.append('route check: must be ADVISORY (exit 0) even when items are flagged (was falsely exit 1)')
+    os.remove(docs.SESSION_MODEL)
+
     if fails:
         print('SELFTEST FAILED:')
         for f in fails:

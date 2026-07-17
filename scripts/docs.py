@@ -464,7 +464,7 @@ def cmd_rehydrate(a):
         st['rehydrates_since'] = st.get('rehydrates_since', 0) + 1
         json.dump(st, open(STANCE, 'w'))
         print(f'\n>>> STANDING STANCE: {st["name"]} (set {st["rehydrates_since"]} rehydrate(s) ago)'
-              + (' — FREEZE: no builds/edits/ops' if st.get('freeze') else '')
+              + (' — FREEZE: blocks builds + memory landings (raw edits cannot be gated)' if st.get('freeze') else '')
               + (' — memory writes need confirmation' if st.get('memory') == 'confirm' else '')
               + (f'\n>>> note: {st["note"]}' if st.get('note') else '')
               + '\n>>> lift with: docs.py stance clear')
@@ -900,9 +900,13 @@ def cmd_verify(a):
             print('verify done: ✗ last verify FAILED — fix + re-run.'); sys.exit(1)
         if s.get('deliverables') != _deliverable_hash():
             print('verify done: ✗ deliverable CHANGED since the last passing verify — re-run `verify run`.'); sys.exit(1)
-        if os.path.exists(LIVETEST) and json.load(open(LIVETEST)).get('state') == 'handed_off':
+        _lt = json.load(open(LIVETEST)).get('state') if os.path.exists(LIVETEST) else None
+        if _lt == 'handed_off':
             print('verify done: ✗ HANDED OFF for the user\'s live test — self-certification is banned; '
                   'await `livetest confirm` or `livetest reject`.'); sys.exit(1)
+        if _lt == 'rejected':  # the user live-tested it and said it's broken — "done" cannot pass a rejection
+            print('verify done: ✗ live test REJECTED by the user — this is NOT done. Fix the deliverable, '
+                  'then `livetest arm` again and earn a fresh `livetest confirm`.'); sys.exit(1)
         print('verify done: ✅ a fresh passing audit covers the current deliverable.')
     elif a.action == 'sync':
         gated = set(re.findall(r'''["']([a-z][a-z0-9_]{2,})["']''', _read(ap)))
@@ -1660,8 +1664,9 @@ def cmd_route(a):
             for item, klass, model in flags[:8]:
                 print(f'   ✗ "{item}"  is {klass}-class → delegate to {model}, then judge its output')
             print(f'{len(flags)} item(s) belong a tier DOWN. Honest limit: keel cannot switch the harness model — '
-                  'it detects + surfaces; delegate the flagged items and verify their return. (exit 1)')
-            sys.exit(1)
+                  'it detects + surfaces (ADVISORY — never blocks the build); delegate the flagged items and '
+                  'verify their return.')
+            return  # advisory by contract: surfaces loudly, exits 0 — nothing downstream may gate on this
         print(f'route check: ✅ every contract item is on the right tier for lead "{sess}".')
 
 

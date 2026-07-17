@@ -38,10 +38,11 @@ acting — do not follow a decision that a later tier superseded.
   orientation to keel, then self-suppresses forever (marker in the skill dir). Relay it to the user verbatim
   on first contact so a brand-new user knows what they just installed.
 - **Standing state binds the whole session.** Rehydrate surfaces any active **stance** (freeze /
-  confirm-memory) and any **open escalations** (BLOCKED-ON-USER). A freeze means no builds, edits, ops, or
-  doc landings — only discussion and staged drafts — until the user clears it. An open escalation means its
-  thread does not move until the user resolves it. These survive session ends and compaction by design;
-  never talk past them.
+  confirm-memory) and any **open escalations** (BLOCKED-ON-USER). A freeze is a HOLD: it hard-gates the two
+  things keel can gate — starting a build (`contract check` refuses) and landing memory (`hydrate` refuses) —
+  and keeps everything as staged drafts until you clear it. It **cannot** stop a raw `Write`/`Edit` (no gate
+  can); honor it as a standing instruction, not a wall. An open escalation means its thread does not move
+  until the user resolves it. These survive session ends and compaction by design; never talk past them.
 
 ## 0a · Outcome decomposition — before executing on a fuzzy OUTCOME
 If the user brings a big/fuzzy OUTCOME rather than a scoped task ("build my personal brand on social

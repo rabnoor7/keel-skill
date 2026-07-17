@@ -2,6 +2,29 @@
 
 All notable changes to keel. Versions follow semver; `docs.py --version` reports the installed version.
 
+## [1.3.1] — 2026-07-17
+
+### Fixed (honesty pass — three behaviors the code didn't actually do, found by a claims-vs-code audit)
+- **`livetest reject` now keeps `verify done` blocked.** A user-rejected live test set state `rejected`, but
+  `verify done` only checked `handed_off` — so a deliverable the user called broken could still pass "done".
+  Now a rejected live test blocks done until you fix it, re-arm, and earn a fresh `livetest confirm`. The
+  flagship "self-certification is banned" is now true on the reject path, not only while a test is pending.
+- **`route check` is genuinely advisory now (exit 0).** It called `sys.exit(1)` while SKILL.md and its own
+  output promise "detects + surfaces, never blocks" — and keel can't act on it anyway (it cannot switch the
+  harness model). It now surfaces mis-routed items just as loudly and exits 0; nothing downstream can be
+  gated by it.
+- **Freeze doc corrected to what freeze actually gates.** SKILL.md claimed a freeze blocks "builds, edits,
+  ops, or doc landings"; in reality it hard-gates `contract check` (builds) and `hydrate` (memory landings)
+  and stages drafts — it cannot stop a raw `Write`/`Edit` (no gate can). The doctrine and the rehydrate
+  freeze banner now say exactly that.
+- **Stale README version badge** (showed 1.2.0 since the 1.3.0 release) corrected.
+
+### Compatibility
+- **Byte-identical to 1.3.0** for anyone who doesn't hit a rejected live test, a flagged route check, or an
+  active freeze — proven on live keel state from two real projects. Each behavioral fix is locked by a
+  permanent `selftest.py` assertion (a rejected live test blocks done · a confirmed one unblocks · route
+  check stays advisory).
+
 ## [1.3.0] — 2026-07-17
 
 ### Added
