@@ -176,6 +176,53 @@ def main():
         fails.append('route check: must be ADVISORY (exit 0) even when items are flagged (was falsely exit 1)')
     os.remove(docs.SESSION_MODEL)
 
+    # T4 · roadmap self-contradiction detector — advisory (never blocking), fires ONLY on undecided+has-choice.
+    open(os.path.join(root, 'docs', 'roadmap.md'), 'w').write(
+        '# Roadmap\n\n## North star\nship it\n\n## Checkpoints\n'
+        '1. [reached] niche\n   - micro-niche chosen\n'
+        '2. [undecided] access layer\n   - FastAPI CRUD BUILT + verified\n')  # undecided BUT has a choice = the lie
+    rc, out = _rc(docs.cmd_rehydrate, full=False)
+    if 'CONTRADICTS ITSELF' not in out:
+        fails.append('T4 roadmap: an undecided checkpoint carrying a choice must be flagged (roadmap-lies-live)')
+    if 'CONTRADICTS' in ''.join(x for x in out.splitlines() if x.startswith('[B')):
+        fails.append('T4 roadmap: the contradiction must be ADVISORY, never a rehydrate BLOCKING item')
+    # a CONSISTENT roadmap (undecided with no choice) must NOT be flagged — no cry-wolf
+    open(os.path.join(root, 'docs', 'roadmap.md'), 'w').write(
+        '# Roadmap\n\n## North star\nship it\n\n## Checkpoints\n1. [reached] niche\n   - chosen\n2. [active] access\n')
+    rc, out = _rc(docs.cmd_rehydrate, full=False)
+    if 'CONTRADICTS ITSELF' in out:
+        fails.append('T4 roadmap: a consistent roadmap must NOT be flagged (cry-wolf)')
+    os.remove(os.path.join(root, 'docs', 'roadmap.md'))
+    # T4 · deliverables misconfig — only when a verify stamp exists AND the tracked dir is missing.
+    import json as _json2
+    open(docs.DELIVERABLES, 'w').write('nonexistent_output_dir\n')
+    open(docs.VERIFY_STAMP, 'w').write(_json2.dumps({'result': 'pass', 'ts': 0, 'deliverables': 'x'}))
+    rc, out = _rc(docs.cmd_rehydrate, full=False)
+    if 'DELIVERABLES MISCONFIGURED' not in out:
+        fails.append('T4 deliverables: a verify-tracked dir that is missing must be flagged (inert staleness net)')
+    os.remove(docs.VERIFY_STAMP)  # without a verify workflow, the same misconfig must stay SILENT
+    rc, out = _rc(docs.cmd_rehydrate, full=False)
+    if 'DELIVERABLES MISCONFIGURED' in out:
+        fails.append('T4 deliverables: must NOT nag a project that is not using verify (cry-wolf)')
+    open(docs.DELIVERABLES, 'w').write('data\n')
+    # T6 · discuss opens a multi-part input as a SET; build gate holds until EVERY part is closed.
+    for r in docs._load_jsonl(docs.DISCUSS):
+        pass
+    open(docs.DISCUSS, 'w').close()  # reset thread state from the earlier discuss test
+    _rc(docs.cmd_discuss, action='open', thread=['part A', 'part B', 'part C'], id=None, choice=None, to_decision=None)
+    openn = [r for r in docs._load_jsonl(docs.DISCUSS) if r.get('status') == 'open']
+    if len(openn) != 3:
+        fails.append(f'T6 discuss: one multi-thread open must arm all parts (got {len(openn)}, expected 3)')
+    docs._ensure(docs.STATE)
+    _json2.dump({'plan': 'x', 'hash': 'x', 'ts': 0, 'approved': True}, open(docs.CONTRACT, 'w'))
+    rc, out = _rc(docs.cmd_contract, action='check', content=None, from_file=None, approved=False, window=None)
+    if rc == 0:
+        fails.append('T6 discuss: build must stay gated while any of the multi-part threads is open')
+    _rc(docs.cmd_discuss, action='close', id=openn[0]['id'], choice=None, to_decision=None, thread=None)
+    rc, out = _rc(docs.cmd_contract, action='check', content=None, from_file=None, approved=False, window=None)
+    if rc == 0:
+        fails.append('T6 discuss: closing ONE of three parts must not release the gate (2 still open)')
+
     if fails:
         print('SELFTEST FAILED:')
         for f in fails:

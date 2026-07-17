@@ -509,6 +509,18 @@ def cmd_rehydrate(a):
             advisory.append(('low', 'roadmap has no checkpoint marked active (no "you are here")', 'docs.py checkpoint status <n> active',
                              '[!] ROADMAP — no checkpoint is marked active yet (no "you are here" pointer).\n'
                              '    → docs.py checkpoint status <n> active once you know where the work currently sits.'))
+        # T4 · roadmap self-contradiction: a checkpoint left `undecided` while ALREADY carrying a recorded
+        # choice is the "roadmap lies live" symptom — a status update that got silently dropped (e.g. lost from
+        # an && chain when an earlier command exited non-zero). Precise by construction, so no cry-wolf.
+        lying = [c for c in rm['checkpoints'] if c['status'] == 'undecided' and c['choices']]
+        if lying:
+            ex = lying[0]
+            advisory.append(('high', f'{len(lying)} checkpoint(s) undecided yet carrying a recorded choice — roadmap self-contradicts',
+                             f'docs.py checkpoint status {ex["n"]} reached  (or drop the stale choice)',
+                             f'[!] ROADMAP CONTRADICTS ITSELF — checkpoint #{ex["n"]} "{ex["title"][:46]}" is [ ] undecided '
+                             f'yet records a choice ("{ex["choices"][0][:52]}").\n'
+                             '    → a status write was likely dropped (a gate-check chained before it with && exited '
+                             f'non-zero). Reconcile: docs.py checkpoint status {ex["n"]} reached — or remove the choice if wrong.'))
 
     if os.path.exists(ANCHOR):
         alabel = os.path.relpath(ANCHOR, ROOT) if os.path.abspath(ANCHOR).startswith(ROOT) else ANCHOR
@@ -571,6 +583,16 @@ def cmd_rehydrate(a):
 
     if os.path.exists(VERIFY_STAMP):
         s = json.load(open(VERIFY_STAMP))
+        # T4 · a verify workflow that tracks a deliverable dir which doesn't exist has a SILENTLY INERT
+        # staleness net (the hash is empty both sides, so "stale" can never fire). Only surfaces for users
+        # actually running verify — never nags a project that doesn't use it.
+        missing_dd = [d for d in _deliverable_dirs() if not os.path.isdir(os.path.join(ROOT, d))]
+        if missing_dd:
+            advisory.append(('high', f'verify tracks deliverable dir(s) {missing_dd} that do not exist — staleness net is inert',
+                             'docs.py deliverables <real-output-dir>',
+                             f'[!] DELIVERABLES MISCONFIGURED — verify tracks "{", ".join(missing_dd)}", which does not '
+                             'exist, so "verify stale" can NEVER fire (your audit safety-net is silently off).\n'
+                             '    → point it at your real output: docs.py deliverables <dir> [<dir> ...]'))
         if s.get('result') != 'pass':
             blocking.append(('last audit FAILED — deliverable is not in a passing state', 'docs.py verify run'))
             print('\n[!!] VERIFY FAILED — the last audit did not pass.')
@@ -1352,6 +1374,23 @@ def cmd_escalate(a):
         print(f'escalation #{a.id} {tgt["status"]}' + (f' → choice: {a.choice}' if a.choice else ''))
 
 
+def cmd_deliverables(a):
+    """Show or set which dir(s) hold the FINAL deliverables that `verify` tracks for staleness (default: data/).
+    Repoint when your outputs live elsewhere (a service dir, a db) so the staleness safety-net actually fires
+    instead of watching an empty/absent folder — the F11 'silently inert' case."""
+    if a.dirs:
+        _ensure(STATE)
+        open(DELIVERABLES, 'w').write('\n'.join(a.dirs) + '\n')
+        missing = [d for d in a.dirs if not os.path.isdir(os.path.join(ROOT, d))]
+        print(f'deliverables → {", ".join(a.dirs)} — verify staleness now tracks these.'
+              + (f'\n  [!] note: {", ".join(missing)} does not exist yet.' if missing else ''))
+    else:
+        cur = _deliverable_dirs()
+        missing = [d for d in cur if not os.path.isdir(os.path.join(ROOT, d))]
+        print('deliverable dirs (verify staleness tracks these): ' + ', '.join(cur)
+              + (f'\n  [!] missing (staleness inert until fixed): {", ".join(missing)}' if missing else ''))
+
+
 def cmd_discuss(a):
     """Discussion Mode (T1). An OPEN thread = an outcome-shaping direction still being shaped WITH the user
     through cascading, steelmanned choices — augmentation, not automation: the goal of an option round is
@@ -1362,14 +1401,19 @@ def cmd_discuss(a):
     Honest limits: opening/closing is agent judgment (doctrine-primary detection, SKILL.md §0b), and raw
     Write/Edit/Bash bypass this like every gate — this arms the same proven plumbing as escalations."""
     if a.action == 'open':
-        if not a.thread:
-            sys.exit('discuss open: needs --thread "<the direction being shaped>"')
+        # --thread is repeatable (list); tolerate a bare string too so one call arms every part of a multi-part input
+        threads = a.thread if isinstance(a.thread, list) else ([a.thread] if a.thread else [])
+        if not threads:
+            sys.exit('discuss open: needs --thread "<direction>" (repeat --thread to arm a multi-part input as a set)')
         rows = _load_jsonl(DISCUSS)
-        did = max((r.get('id', 0) for r in rows), default=0) + 1
-        _append_jsonl(DISCUSS, {'id': did, 'thread': a.thread, 'status': 'open', 'ts': time.time()})
-        print(f'DISCUSS #{did} OPEN — "{a.thread}". Shaping mode: decompose into steelmanned either/or'
-              f' choices, one fork at a time; harvest every attachment the user adds to an answer.'
-              f'\n  builds gate on this until it converges → docs.py discuss close {did} [--choice "..."]')
+        nid = max((r.get('id', 0) for r in rows), default=0)
+        for t in threads:
+            nid += 1
+            _append_jsonl(DISCUSS, {'id': nid, 'thread': t, 'status': 'open', 'ts': time.time()})
+            print(f'DISCUSS #{nid} OPEN — "{t}".')
+        print('Shaping mode: decompose each into steelmanned either/or choices, one fork at a time; harvest '
+              'every attachment the user adds to an answer as its OWN thread. Builds gate until EACH converges '
+              '→ docs.py discuss close <id> [--choice "..."]  (discuss list shows what is still open)')
     elif a.action == 'list':
         rows = [r for r in _load_jsonl(DISCUSS) if r.get('status') == 'open']
         if not rows:
@@ -2085,8 +2129,9 @@ def main():
     p.add_argument('name', nargs='?', choices=['freeze', 'confirm'])
     p.add_argument('--memory', choices=['confirm', 'silent']); p.add_argument('--note'); p.set_defaults(fn=cmd_stance)
     p = sub.add_parser('discuss'); p.add_argument('action', choices=['open', 'close', 'list'])
-    p.add_argument('id', nargs='?', type=int); p.add_argument('--thread'); p.add_argument('--choice')
+    p.add_argument('id', nargs='?', type=int); p.add_argument('--thread', action='append'); p.add_argument('--choice')
     p.add_argument('--to-decision', dest='to_decision'); p.set_defaults(fn=cmd_discuss)
+    p = sub.add_parser('deliverables'); p.add_argument('dirs', nargs='*'); p.set_defaults(fn=cmd_deliverables)
     p = sub.add_parser('escalate'); p.add_argument('action', choices=['raise', 'list', 'resolve', 'retract'])
     p.add_argument('id', nargs='?', type=int); p.add_argument('--question'); p.add_argument('--domain')
     p.add_argument('--because', choices=['pivotal', 'irreversible', 'cost']); p.add_argument('--options')

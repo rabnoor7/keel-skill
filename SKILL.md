@@ -73,6 +73,10 @@ changes what gets built, whose call it is, or adds a direction/idea/question to 
 - **The attachment is the yield.** Users routinely answer a pick PLUS free text — that prose is the
   payload, never a footnote. Every attachment becomes its own tracked thread (surface it back, `discuss
   open` it, or fold it in explicitly) — resolving one silently ("my call") is the corpus's worst failure.
+- **Multi-part inputs → a thread per part, none dropped.** When one message carries several directions (or
+  a pick + attachments), arm them as a SET — `docs.py discuss open --thread "A" --thread "B" ...` opens one
+  per part in a single call. The build stays gated until EVERY part is closed, so no numbered part quietly
+  evaporates (the recurring "answered 3 things, only 1 got closed" failure). `discuss list` shows what's left.
 - **Narrow-technical forks are NOT user questions** — resolve them yourself and state it (§2's necessity
   test). Decompose loudly exactly where shaping happens; never manufacture ceremony on implementation
   detail. Pacing: mid-batch "continue / too much left" means **denser batching, never abandonment**.
@@ -217,10 +221,16 @@ escalate (raise/resolve) · ask (add/bump/close --evidence) · match · preserve
 orphans · smoke (set/run/gate) · accept (add/show/check) · route (set/model/check) ·
 critique (assume/research/alt/check) · coverage (init/check) · livetest (arm/confirm/reject) ·
 handoff (send/list/ack) · outcome (set/show) · checkpoint (add/status/choice/list) ·
-discuss (open/close/list)`
+discuss (open [--thread repeatable] /close/list) · deliverables (show/set — what verify tracks for staleness)`
 — run `python3 scripts/docs.py --help` · `docs.py --version` reports the installed version.
 
 ## Standing defaults
 Honesty over agreeableness. Ask, don't assume — self-serve first, as many questions as needed and zero
 more. Measure real limits on a small sample before scaling. Never dispose of fetched/costly data —
 merge partials, prefer incremental/resumable work. Keep deliverables separate from scratch.
+**Never chain a state-mutating `docs.py` command after a gate-check in one `&&` line** (e.g.
+`... critique check && ... checkpoint status N reached`): if the gate exits non-zero the mutation is
+silently skipped and never retried — the "roadmap lies live" bug. Run the checks, then the writes, as
+separate steps. `rehydrate` now flags a checkpoint left `undecided` that already carries a choice as a
+self-contradiction, but don't rely on the detector — don't create the drop. If your final deliverables
+don't live in `data/`, point `docs.py deliverables <dir>` at them so the verify-staleness net isn't inert.
