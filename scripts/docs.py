@@ -24,7 +24,56 @@ try:
 except ImportError:
     fcntl = None
 
-ROOT = os.getcwd()
+def _resolve_root():
+    """Anchor the project root deterministically instead of trusting the raw cwd. The old `ROOT = getcwd()`
+    silently wrote a project's memory wherever the shell happened to sit — into a stray subdirectory, or
+    (worst, and observed in the wild) into keel's own shared install dir — losing all of it with NO error.
+    Order: explicit KEEL_ROOT env → nearest ancestor holding a `.keel/` marker (so a cwd that drifted into a
+    subdir still lands on the real project) → cwd (a brand-new project). Run from a real project root, this
+    returns cwd exactly as before, so existing behavior is byte-identical. The skill-install-dir guard lives
+    in main() so `--version`/`--help` still work from anywhere."""
+    env = os.environ.get('KEEL_ROOT')
+    if env:
+        r = os.path.realpath(env)
+        if not os.path.isdir(r):                      # a typo'd override must fail loud, not create a stray tree
+            sys.exit(f'keel: KEEL_ROOT="{env}" is not a directory. Point it at your project, or unset it.')
+        return r
+    # realpath (not abspath) so symlinks normalize consistently — else `getcwd()` (resolved) and
+    # `expanduser("~")` (raw) mismatch on macOS's /private symlink and the home-cap silently fails.
+    cwd = os.path.realpath(os.getcwd())
+    home = os.path.realpath(os.path.expanduser('~'))
+
+    def _below_home(p):
+        try:
+            return os.path.commonpath([p, home]) == home and p != home
+        except ValueError:                            # different drive (Windows) → treat as outside home
+            return False
+
+    cwd_below = _below_home(cwd)
+    d = cwd
+    while True:
+        # Skip $HOME itself and — when the project lives under home — any dir not strictly below home, so a
+        # stray `~/.keel` can never swallow a subdir's project into one shared memory. Dirs wholly outside
+        # the home tree (e.g. /opt/proj) climb normally.
+        skip = (d == home) or (cwd_below and not _below_home(d))
+        if not skip and os.path.isdir(os.path.join(d, '.keel')):
+            return d                                  # inside an existing keel project's tree → its true root
+        parent = os.path.dirname(d)
+        if parent == d:
+            return cwd                                # no marker found → cwd is a fresh project
+        d = parent
+
+
+def _in_install_area(root):
+    """True if `root` is the canonical keel install area (~/.claude/skills) or under it — where a project's
+    memory must NEVER be written. Realpath'd both sides so a /var↔/private symlink can't defeat it; keyed on
+    the resolved root (not where docs.py sits) so a vendored/dev copy in a real project stays usable."""
+    skills = os.path.realpath(os.path.expanduser(os.path.join('~', '.claude', 'skills')))
+    root = os.path.realpath(root)
+    return root == skills or root.startswith(skills + os.sep)
+
+
+ROOT = _resolve_root()
 DOCS = os.path.join(ROOT, 'docs')
 MEM = os.path.join(ROOT, 'memory')
 STATE = os.path.join(ROOT, '.keel')
@@ -426,7 +475,7 @@ TO START
   escalation stays blocking, an open ask stays open — until YOU clear them.
   (docs.py --version prints the installed version.)
 
-The rules that must not drift live in code, not prose:  python3 scripts/docs.py --help
+The rules that must not drift live in code, not prose:  python3 ~/.claude/skills/keel/scripts/docs.py --help
 ======================================================================"""
 
 
@@ -735,22 +784,36 @@ def _emit_record(kind, fn_name, content, target_dir, draft, title, extra=None):
         print(f'{kind}: wrote {os.path.relpath(os.path.join(target_dir, fn_name), ROOT)} (queued for hydrate)')
 
 
+def _derive_title(s):
+    """A title from free text, so `journal "some note"` never fails for lack of --title (the exact shape that
+    silently lost 4 load-bearing notes in the wild). First ~10 words, capped."""
+    t = ' '.join((s or '').strip().split()[:10])[:70].strip()
+    return t or 'untitled'
+
+
 def cmd_decision(a):
     n = _next_adr()
-    body = a.content or (a.from_file and _read(a.from_file)) or '## Context\n\n## Decision\n\n## Rejected\n'
-    fn = f'{n:04d}-{_slug(a.title)}.md'
-    _emit_record('decision', fn, f'# {n:04d} — {a.title}\n\n{body}\n', DEC, a.draft, a.title, {'n': n})
+    txt = getattr(a, 'text', None)
+    filebody = a.from_file and _read(a.from_file)            # --content / --from win as the BODY (never discarded)
+    body = a.content or filebody or txt or '## Context\n\n## Decision\n\n## Rejected\n'
+    title = a.title or (_derive_title(txt) if txt else 'untitled')  # positional acts as the label
+    fn = f'{n:04d}-{_slug(title)}.md'
+    _emit_record('decision', fn, f'# {n:04d} — {title}\n\n{body}\n', DEC, a.draft, title, {'n': n})
     df = _dec_file()
     if df and not a.draft:  # repo keeps a single-file log: append a pointer so its history stays complete
         with open(df, 'a', encoding='utf-8') as f:
-            f.write(f'\n> ADR {n:04d} — {a.title} (recorded at {os.path.relpath(os.path.join(DEC, fn), ROOT)})\n')
+            f.write(f'\n> ADR {n:04d} — {title} (recorded at {os.path.relpath(os.path.join(DEC, fn), ROOT)})\n')
         print(f'decision: pointer appended to {os.path.relpath(df, ROOT)} (keel writes one-per-file; your log stays complete)')
 
 
 def cmd_journal(a):
-    fn = f'{_now():%Y-%m-%d}-{_slug(a.title)}.md'
-    content = f'# {a.title}\n\n{a.content or (a.from_file and _read(a.from_file)) or ""}\n\nfriction: {a.friction or "(none)"}\n'
-    _emit_record('journal', fn, content, JRN, a.draft, a.title)
+    txt = getattr(a, 'text', None)
+    filebody = a.from_file and _read(a.from_file)            # --content / --from win as the BODY (never discarded)
+    body = a.content or filebody or txt or ''
+    title = a.title or (_derive_title(txt) if txt else _derive_title(body))
+    fn = f'{_now():%Y-%m-%d}-{_slug(title)}.md'
+    content = f'# {title}\n\n{body}\n\nfriction: {a.friction or "(none)"}\n'
+    _emit_record('journal', fn, content, JRN, a.draft, title)
 
 
 def cmd_supersede(a):
@@ -2210,7 +2273,8 @@ def main():
     p = sub.add_parser('intro'); p.add_argument('--force', action='store_true'); p.set_defaults(fn=cmd_intro)
     p = sub.add_parser('profile'); p.add_argument('name', nargs='?'); p.set_defaults(fn=cmd_profile)
     for name in ('decision', 'journal'):
-        p = sub.add_parser(name); p.add_argument('--title', required=True); p.add_argument('--content')
+        p = sub.add_parser(name); p.add_argument('text', nargs='?')  # forgiving: `journal "what happened"` just works
+        p.add_argument('--title'); p.add_argument('--content')       # --title now optional; derived from text if absent
         p.add_argument('--from', dest='from_file'); p.add_argument('--draft', action='store_true')
         p.set_defaults(fn=globals()[f'cmd_{name}'])
         if name == 'journal':
@@ -2280,6 +2344,28 @@ def main():
     p.add_argument('arg1', nargs='?'); p.add_argument('arg2', nargs='?'); p.add_argument('--text')
     p.add_argument('--to-decision', dest='to_decision'); p.set_defaults(fn=cmd_checkpoint)
     a = ap.parse_args()
+    # Guard: NEVER operate inside keel's own install dir. The catastrophic cwd bug was an agent running
+    # `cd ~/.claude/skills/keel && python3 scripts/docs.py …`, which made ROOT the shared install and wrote a
+    # whole project's memory into it (project got zero durable memory, install got polluted). Refuse loudly.
+    # (--version/--help already exited inside parse_args, so they still work from anywhere.)
+    # Refuse only if keel would write into the canonical skill-INSTALL AREA (~/.claude/skills). Keyed on the
+    # RESOLVED ROOT (so an explicit KEEL_ROOT escape genuinely works) and realpath'd on both sides (so a
+    # /var↔/private symlink can't defeat it). Deliberately NOT keyed on where docs.py physically sits — a
+    # vendored/dev copy inside a real project (e.g. keel's own repo, or a worktree) is a legitimate layout and
+    # must stay usable; only the shared install under ~/.claude/skills is protected.
+    if _in_install_area(ROOT):
+        _dp = os.path.realpath(os.path.join(SKILL_ROOT, 'scripts', 'docs.py'))
+        sys.exit("keel: refusing — this would write the project's memory into the keel install area\n"
+                 "  (~/.claude/skills) and the project would silently get NOTHING.\n"
+                 "  → cd to your PROJECT root and run keel by ABSOLUTE path:\n"
+                 f"      python3 {_dp} <command>\n"
+                 "  → or name the project explicitly (works from anywhere, including here):\n"
+                 f"      KEEL_ROOT=/path/to/your/project python3 {_dp} <command>")
+    # If we ANCHORED to an ancestor's .keel (cwd drifted into a subdir), say so — a climb must never be silent,
+    # so a stray `.keel` in a shared parent (e.g. ~/code) that captures a subproject is at least visible.
+    if ROOT != os.path.realpath(os.getcwd()) and not os.environ.get('KEEL_ROOT'):
+        sys.stderr.write(f'keel: anchored to project root {ROOT} (found a .keel/ above the current dir) — '
+                         'set KEEL_ROOT if that is not your project.\n')
     a.fn(a)
 
 

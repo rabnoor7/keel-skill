@@ -2,6 +2,39 @@
 
 All notable changes to keel. Versions follow semver; `docs.py --version` reports the installed version.
 
+## [1.4.2] — 2026-07-18
+
+### Fixed (CRITICAL — silent memory loss, found by a field audit of real sessions)
+- **cwd/ROOT anchoring.** `docs.py` used `ROOT = os.getcwd()` with no anchor, so if the shell drifted (a
+  chained `cd` in a long session) keel silently wrote a project's memory into the wrong place — a stray
+  subdirectory, or (observed in the wild) into keel's **own install dir**, so the project got **zero durable
+  memory** and the shared install got polluted, with no error and a cheerful `✅ clean` every time. Now:
+  `ROOT` resolves to the nearest ancestor holding a `.keel/` marker (a subdir drift lands on the real
+  project), honors an explicit `KEEL_ROOT` env override, and `docs.py` **refuses to run inside keel's own
+  install dir** (the catastrophic case) with a clear, actionable message. Byte-identical when run from a real
+  project root. **Absolute-invocation examples everywhere** (the mine showed 87% of real sessions copied the
+  old relative `python3 scripts/docs.py` example, which is what forced the `cd` into the skill dir).
+  Safety rails, hardened by an adversarial audit: the refusal keys on the canonical **install area
+  (`~/.claude/skills`)** — realpath'd, checked against the *resolved* root — so it can't be defeated by a
+  `/var`↔`/private` symlink, a **vendored/dev copy** of `docs.py` inside a real project stays usable, and an
+  explicit `KEEL_ROOT` is a **genuine escape from anywhere**. The ancestor search **never anchors at/above
+  `$HOME`** (a stray `~/.keel` can't merge projects) and **announces** when it climbs to an ancestor's
+  `.keel` (a stray marker in a shared parent like `~/code` is visible, never silent). `KEEL_ROOT` at a
+  nonexistent path fails loud. And `--content`/`--from` are **never discarded** by a positional note (the
+  positional becomes the label).
+- **No more silent capture loss.** `journal`/`decision` now accept a bare positional note
+  (`docs.py journal "what happened"`, title auto-derived) so the common shape can't fail for lack of
+  `--title`. Doctrine added: **never silence keel's stderr (`2>/dev/null`) or assume a capture landed** —
+  that exact combination lost 4 load-bearing records in the field.
+- **Absolute-path invocation doctrine** (SKILL.md Standing defaults): always run keel by absolute path from
+  the project root; never `cd` into the skill dir.
+
+### Compatibility
+- **Byte-identical to 1.4.1 when run from a real project root** (proven on two real repos across
+  rehydrate/contract/status). The only behavior changes are the three fixes above. Selftest-locked (cwd
+  anchor climbs to the ancestor `.keel`, returns cwd for a fresh project, honors `KEEL_ROOT`; positional
+  journal derives a title).
+
 ## [1.4.1] — 2026-07-18
 
 ### Fixed (`status` was a facade where it promised a lie-detector — caught by a UX dogfood on real state)

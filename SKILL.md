@@ -25,7 +25,10 @@ Assume you will forget, drift, and rationalize — so lean on the checks, not yo
 Bookended by memory, gated by clarification, closed by verification.
 
 ## 0 · Rehydrate (inbound) — always first
-Run `python3 scripts/docs.py rehydrate`. It loads a *computed digest* across ALL memory tiers (committed
+Run `python3 ~/.claude/skills/keel/scripts/docs.py rehydrate` — **always by absolute path, from the user's
+PROJECT root; never `cd` into the skill dir** (that writes memory into keel's install and loses it; see
+Standing defaults). Below, `docs.py <cmd>` is shorthand for that same absolute invocation. It loads a
+*computed digest* across ALL memory tiers (committed
 `docs/` + project memory + global prefs) and **fails loudly** on: a stale anchor, cross-tier
 contradictions, unflushed pending items, or SUSPECT (un-reaffirmed) decisions. Read what it surfaces
 before you respond. Never re-ask what is recorded. If it flags a contradiction, resolve it *before*
@@ -243,7 +246,7 @@ critique (assume/research/alt/check) · coverage (init/check) · livetest (arm/c
 handoff (send/list/ack) · outcome (set/show) · checkpoint (add/status/choice/list) ·
 discuss (open [--thread repeatable] /close/list) · deliverables (show/set — what verify tracks for staleness) ·
 status ([--line] — the clean visibility panel: what's in memory + what's open; a readout, never gates)`
-— run `python3 scripts/docs.py --help` · `docs.py --version` reports the installed version.
+— run `python3 ~/.claude/skills/keel/scripts/docs.py --help` · `docs.py --version` reports the installed version.
 
 ## Standing defaults
 Honesty over agreeableness. Ask, don't assume — self-serve first, as many questions as needed and zero
@@ -255,3 +258,12 @@ silently skipped and never retried — the "roadmap lies live" bug. Run the chec
 separate steps. `rehydrate` now flags a checkpoint left `undecided` that already carries a choice as a
 self-contradiction, but don't rely on the detector — don't create the drop. If your final deliverables
 don't live in `data/`, point `docs.py deliverables <dir>` at them so the verify-staleness net isn't inert.
+**INVOCATION — run keel by ABSOLUTE path from the PROJECT root; NEVER `cd` into the skill dir.** keel writes
+its memory relative to the current directory. Always run `python3 ~/.claude/skills/keel/scripts/docs.py
+<cmd>` while your shell sits in the user's project (or set `KEEL_ROOT=/path/to/project`). Running
+`cd ~/.claude/skills/keel && python3 scripts/docs.py …` writes the project's memory into keel's *own install
+dir* and the project silently gets nothing — keel now refuses this, but don't rely on the guard: never cd there.
+**NEVER silence keel's stderr (`2>/dev/null`) and never assume a capture landed.** A mistyped `journal`/
+`decision` fails on stderr; hiding it silently loses the note (this really lost 4 load-bearing records). Let
+errors show, check the exit, and glance that the record landed. (`journal`/`decision` now also accept a bare
+`docs.py journal "what happened"` — a positional note, title derived — so the common shape can't fail for lack of `--title`.)

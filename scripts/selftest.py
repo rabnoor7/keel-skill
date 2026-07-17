@@ -257,6 +257,62 @@ def main():
         fails.append('status: a consistent roadmap must NOT report a contradiction (cry-wolf)')
     os.remove(os.path.join(root, 'docs', 'roadmap.md'))
 
+    # Wave A · cwd/ROOT anchor (the silent-memory-loss fix) + journal forgiveness.
+    _here = os.getcwd()
+    projp = tempfile.mkdtemp(prefix='keel-root-'); os.makedirs(os.path.join(projp, '.keel'))
+    os.makedirs(os.path.join(projp, 'sub', 'deep')); freshp = tempfile.mkdtemp(prefix='keel-fresh-')
+    try:
+        os.chdir(os.path.join(projp, 'sub', 'deep'))
+        if os.path.realpath(docs._resolve_root()) != os.path.realpath(projp):
+            fails.append('cwd anchor: _resolve_root must climb to the nearest ancestor .keel (subdir-drift fix)')
+        os.chdir(freshp)
+        if os.path.realpath(docs._resolve_root()) != os.path.realpath(freshp):
+            fails.append('cwd anchor: with no ancestor .keel, _resolve_root must return cwd (fresh project)')
+        os.environ['KEEL_ROOT'] = projp
+        if os.path.realpath(docs._resolve_root()) != os.path.realpath(projp):
+            fails.append('cwd anchor: KEEL_ROOT env must override')
+        os.environ.pop('KEEL_ROOT', None)
+        # home-cap: a stray .keel AT $HOME must NOT capture a project below it (the over-climb footgun)
+        fakehome = tempfile.mkdtemp(prefix='keel-home-'); os.makedirs(os.path.join(fakehome, '.keel'))
+        os.makedirs(os.path.join(fakehome, 'p', 'q')); _oldhome = os.environ.get('HOME')
+        os.environ['HOME'] = fakehome; os.chdir(os.path.join(fakehome, 'p', 'q'))
+        if os.path.realpath(docs._resolve_root()) != os.path.realpath(os.path.join(fakehome, 'p', 'q')):
+            fails.append('cwd anchor: a stray .keel AT $HOME must not capture a project below it (over-climb footgun)')
+        (os.environ.__setitem__('HOME', _oldhome) if _oldhome is not None else os.environ.pop('HOME', None))
+        # KEEL_ROOT at a nonexistent path must EXIT loudly, not silently create a stray tree
+        os.environ['KEEL_ROOT'] = os.path.join(freshp, 'does-not-exist')
+        try:
+            docs._resolve_root(); fails.append('cwd anchor: KEEL_ROOT at a nonexistent path must exit, not proceed')
+        except SystemExit:
+            pass
+        os.environ.pop('KEEL_ROOT', None)
+    finally:
+        os.chdir(_here)
+    import types as _types
+    _b = io.StringIO()
+    with contextlib.redirect_stdout(_b):
+        docs.cmd_journal(_types.SimpleNamespace(text='shipped the auth layer today', title=None,
+                                                content=None, from_file=None, draft=False, friction=None))
+    _jrn = docs._journals_sorted()
+    if not _jrn or 'shipped-the-auth' not in os.path.basename(_jrn[-1]):
+        fails.append('journal forgiveness: a bare positional note must create a journal with a derived title')
+    # 1.4.2 adversarial-audit hardening: guard keys on the canonical INSTALL AREA (~/.claude/skills), so a
+    # vendored/dev copy of docs.py inside a real project stays usable; and --from is never discarded.
+    _skills = os.path.realpath(os.path.expanduser(os.path.join('~', '.claude', 'skills')))
+    if not docs._in_install_area(os.path.join(_skills, 'keel')):
+        fails.append('guard: a path under ~/.claude/skills must be flagged as the install area')
+    if docs._in_install_area(root):
+        fails.append('guard: a real project dir must NOT be flagged as the install area (would block vendored/dev use)')
+    _fp = os.path.join(root, 'body.md'); open(_fp, 'w').write('## Context\nprepared body text\n')
+    _b4 = io.StringIO()
+    with contextlib.redirect_stdout(_b4):
+        docs.cmd_decision(_types.SimpleNamespace(text='short label', title=None, content=None, from_file=_fp, draft=False))
+    _lastdec = sorted(docs._decisions())[-1]
+    if 'prepared body text' not in open(_lastdec).read():
+        fails.append('decision: --from body must NOT be discarded when a positional label is also given')
+    if 'short-label' not in os.path.basename(_lastdec):
+        fails.append('decision: the positional should become the label when --from supplies the body')
+
     if fails:
         print('SELFTEST FAILED:')
         for f in fails:
