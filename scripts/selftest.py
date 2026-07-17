@@ -231,6 +231,8 @@ def main():
     rc, out = _rc(docs.cmd_status, line=True)
     if rc != 0 or out.count('\n') != 1 or not out.startswith('▸'):
         fails.append(f'status --line: must be a single line starting with ▸ (rc={rc}, lines={out.count(chr(10))})')
+    if 'last:' not in out:  # point-1: the line must SHOW the last captured record, so the agent relays it (not hand-write)
+        fails.append('status --line: must name the last captured record (last: …) when records exist — the fabrication fix')
     open(docs.STANCE, 'w').write(_json.dumps({'name': 'freeze', 'freeze': True}))  # blocking state...
     rc, out = _rc(docs.cmd_status, line=False)
     if rc != 0:

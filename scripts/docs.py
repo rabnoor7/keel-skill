@@ -1503,6 +1503,20 @@ def cmd_status(a):
         if disc_open: bits.append(f'{len(disc_open)} thread(s) open')
         if rm and rm.get('checkpoints'):
             bits.append(f'phase {sum(1 for c in rm["checkpoints"] if c["status"] == "reached")}/{len(rm["checkpoints"])}')
+        # the most-recent durable record — so the line itself SHOWS what keel last captured; the agent relays
+        # this exact line rather than hand-writing a "noted: …" (the fabrication the §0c example used to invite).
+        _last, _lt = None, -1.0
+        _dp = _decisions()
+        if _dp and decs:
+            _m = _mtime(_dp[-1]); _t = re.sub(r'^\d{3,4}\s*[—-]\s*', '', decs[-1]['title']).strip()
+            if _m > _lt: _lt, _last = _m, f'decision "{_t[:30]}"'
+        if js:
+            _m = _mtime(js[-1])
+            if _m > _lt: _lt, _last = _m, f'journal "{os.path.basename(js[-1])[11:-3][:30]}"'
+        if disc_open:
+            _m = disc_open[-1].get('ts', 0)
+            if _m > _lt: _lt, _last = _m, f'thread "{disc_open[-1].get("thread", "")[:30]}"'
+        if _last: bits.append('last: ' + _last)
         if st and st.get('freeze'): bits.append('FROZEN')
         if esc_open: bits.append(f'{len(esc_open)} blocked-on-you')
         if health: bits.append(f'⚠{len(health)}')  # never let the one-liner look clean while integrity signals wait

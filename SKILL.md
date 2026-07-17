@@ -95,14 +95,19 @@ changes what gets built, whose call it is, or adds a direction/idea/question to 
 The #1 user complaint is *"I can't tell keel is running in the background or what it noted."* Two surfaces,
 one truth (`docs.py status` computes both from disk — never a stored number). This is passive REPORTING —
 never a question, never a special mode; keep it general (no different behavior when "deep" in something).
-- **Presence line (frequent, tiny).** On a turn where keel actually **captured** something (a decision,
-  journal, discuss thread, checkpoint) OR has open/blocking state, surface a compact line so the user sees
-  it's live and *what* it caught — e.g. `▸ keel · noted: thread "referral-program" (gates builds) · 14 in
-  memory · 1 thread open`. Get the standing totals from `docs.py status --line`. **Name only what's
-  contextually LIVE** — a newly-opened thread that now gates builds, a blocking state, or a capture tied to
-  what the user is actually discussing this turn; let *other* records (a decision unrelated to the current
-  exchange) roll into the totals COUNT rather than being named — naming an off-topic capture reads as a
-  non-sequitur ("wait, when did we decide that?"). On a truly quiet turn, stay silent — don't manufacture noise.
+- **Presence line — RELAY the tool, never hand-write it.** On a turn where keel actually **captured**
+  something (a decision, journal, discuss thread, checkpoint) OR has open/blocking state, run
+  `docs.py status --line` and surface its output **verbatim** — it already reads e.g.
+  `▸ keel 1.4.2 · 14 decision(s) · phase 3/6 · last: decision "auth via JWT" · ⚠2`. Do **not** paraphrase or
+  invent your own `▸ keel · noted: …` line — a hand-written line drifts from the truth (and diverges from the
+  tool). The `▸ keel …` prefix **is keel's signature**: relaying it verbatim is what lets the user tell
+  keel's voice from yours (the #1 field complaint: *"I can't tell if this is from keel or from you"*). You may
+  add a short plain-language note of what you just did **around** the line, but the `▸ keel …` line stays
+  exactly as the tool prints it. On a truly quiet turn (nothing captured, nothing open), stay silent — don't
+  manufacture noise.
+- **Don't muffle keel's voice.** When you're showing the user project *state*, show keel's own line/verdict —
+  do NOT pipe keel's output through `head`/`tail`/`grep` into your own prose (the field corpus does this 280+
+  times, stripping the `▸ keel`/`VERDICT:`/banner so the user never sees keel spoke). Quote keel; don't launder it.
 - **Status panel (infrequent, dissociated).** `docs.py status` prints the clean full readout (in-memory ·
   open-now). Show it **on demand** (the user asks "keel status" / "what's in memory") **inline in the same
   chat** — never make them fork a chat to see state (a fork is a stale snapshot). Also surface it **after a
