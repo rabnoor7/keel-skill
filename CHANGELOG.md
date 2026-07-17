@@ -2,6 +2,29 @@
 
 All notable changes to keel. Versions follow semver; `docs.py --version` reports the installed version.
 
+## [1.4.0] — 2026-07-17
+
+### Added (visibility — you can now SEE keel is running and what it captured)
+- **`docs.py status`** — a clean, glanceable panel of what keel HAS and what's OPEN for this project:
+  *in-memory* (decisions · journal · roadmap phases with "you are here" · open asks) and *open-now*
+  (discuss threads · escalations · stance · contract · verify). Always recomputed from disk — a
+  lie-detector, never a stored number. It is a pure **readout: it never gates** (exits 0 even under an
+  active freeze, where `rehydrate`/`contract` still block). Answers "is keel even tracking anything? what's
+  in memory?" **inline** — no more forking a chat to see project state (a fork is a stale snapshot).
+- **`docs.py status --line`** — the one-line ambient form (`▸ keel · N in memory · 1 thread open`).
+- **Visibility doctrine (SKILL.md §0c):** two dissociated surfaces — a compact **presence line** the agent
+  surfaces on turns where keel actually captured something or has open/blocking state (naming only what's
+  *contextually live*, silent on quiet turns — no manufactured noise), and the fuller **status panel**
+  on-demand or after a heavier run/milestone. Fixes the #1 user complaint: "I can't tell keel is running or
+  what it noted." Detection of "a heavy run" is agent judgment (keel can't see the conversation); `status`
+  supplies the facts.
+
+### Compatibility
+- **Purely additive.** `status` is a new command; every existing command is **byte-identical to 1.3.2**
+  (proven on two real projects). The presence line is agent doctrine, not a change to any command's output.
+  Validated by a blind-agent battery: silent on quiet turns · inline (never forks) on "what's tracked?" ·
+  helpful (non-noisy) on capture turns. Selftest-locked, including that `status` never gates.
+
 ## [1.3.2] — 2026-07-17
 
 ### Added (integrity advisories — keel now catches when it was silently wrong about your project)

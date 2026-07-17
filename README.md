@@ -2,7 +2,7 @@
 
 ### Bring the goal you can't break down. Leave with the plan *you chose*.
 
-![version](https://img.shields.io/badge/version-1.3.2-1f6feb)
+![version](https://img.shields.io/badge/version-1.4.0-1f6feb)
 ![python](https://img.shields.io/badge/python-3%20(stdlib%20only)-1f6feb)
 ![self-tested](https://img.shields.io/badge/self--tested-passing-2ea043)
 ![license](https://img.shields.io/badge/license-MIT-2ea043)
@@ -119,7 +119,7 @@ keel's whole soul is honesty over agreeableness. Overselling on its own README w
 
 ```bash
 ./install.sh                      # → ~/.claude/skills/keel
-python3 ~/.claude/skills/keel/scripts/docs.py --version   # keel 1.3.2
+python3 ~/.claude/skills/keel/scripts/docs.py --version   # keel 1.4.0
 ```
 Requirements: Python 3 (standard library only).
 
