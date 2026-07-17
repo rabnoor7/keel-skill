@@ -2,6 +2,29 @@
 
 All notable changes to keel. Versions follow semver; `docs.py --version` reports the installed version.
 
+## [1.3.0] — 2026-07-17
+
+### Added
+- **Discussion Mode** (`docs.py discuss open/close/list`) — §0a's decompose-before-execute reflex,
+  generalized to ANY point in a session. When an input is *outcome-shaping* (changes what gets built, whose
+  call it is, or adds a new direction/idea/question), keel arms a discussion thread and shapes it WITH the
+  user through cascading, steelmanned either/or choices before building on it — **augmentation, not
+  automation**: the goal of an option round is the user's *clarity*, not their selection, and the free text
+  a user attaches to a pick is treated as the payload (its own tracked thread), never a dropped footnote.
+  Narrow-technical forks are resolved and stated, never turned into ceremony.
+- **Teeth at the build moment, and only there.** `contract check` refuses while any discussion thread is
+  open (exit 1, naming them); `rehydrate` surfaces open threads **advisory-only** (orientation, not
+  obstruction). Exit is **per-thread** — a converged thread closes immediately (`discuss close <id>
+  [--choice "..."] [--to-decision "<title>"]`, promotable to a durable ADR) while others stay open; a
+  settled thread is never re-asked. Detection is doctrine (SKILL.md §0b) — the CLI can't see the
+  conversation; arming is the agent's reflex.
+
+### Compatibility
+- **Purely additive.** `discuss` is a new command; with no open thread, `rehydrate` and `contract check`
+  are **byte-identical to 1.2.0** — proven on live keel state from two real projects. A user who never opens
+  a discussion thread sees zero change. Grounded in a blind-model battery (arm on outcome-shaping · stay
+  silent on narrow-technical · harvest the attachment) + full-lifecycle sandbox + selftest locks.
+
 ## [1.2.0] — 2026-07-15
 
 ### Added

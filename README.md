@@ -119,7 +119,7 @@ keel's whole soul is honesty over agreeableness. Overselling on its own README w
 
 ```bash
 ./install.sh                      # → ~/.claude/skills/keel
-python3 ~/.claude/skills/keel/scripts/docs.py --version   # keel 1.2.0
+python3 ~/.claude/skills/keel/scripts/docs.py --version   # keel 1.3.0
 ```
 Requirements: Python 3 (standard library only).
 
