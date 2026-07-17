@@ -2,6 +2,27 @@
 
 All notable changes to keel. Versions follow semver; `docs.py --version` reports the installed version.
 
+## [1.4.1] — 2026-07-18
+
+### Fixed (`status` was a facade where it promised a lie-detector — caught by a UX dogfood on real state)
+- **The self-contradiction now shows.** A checkpoint left `undecided` while carrying a recorded choice (the
+  "roadmap lies live" bug) rendered as a plain `[ ]` in the `status` bar — **indistinguishable from "not
+  started."** A blind agent reading it concluded "haven't started 4 or 5 yet," which was flatly wrong (both
+  were built + verified). It now renders as `[!]` with a legend, plus a **NEEDS RECONCILING** section that
+  lists every integrity issue with a count.
+- **"verify: pass" no longer falsely reassures.** When the deliverable tracker points at a dir that doesn't
+  exist (staleness net inert), the line now reads `pass  ⚠ but tracker INERT … this "pass" can never go
+  stale` instead of a bare "pass."
+- **`status` surfaces its health count; the footer is dynamic** (`NEEDS RECONCILING (N)` + "fixes: rehydrate"
+  vs "✓ no integrity issues") instead of a static line, and **`status --line` carries a `⚠N` marker** so the
+  one-liner can never look clean while integrity signals wait.
+- **Truncation now shows `…`** so a clipped tail reads as "more here," not as a bug/data-loss.
+
+### Compatibility
+- `rehydrate` and every other command **byte-identical to 1.4.0** (only `status` changed — proven on two
+  real projects). The health signals reuse the same detectors `rehydrate` uses (no parallel source of truth),
+  and are cry-wolf-safe (a consistent roadmap reports nothing). Locked by new `selftest.py` assertions.
+
 ## [1.4.0] — 2026-07-17
 
 ### Added (visibility — you can now SEE keel is running and what it captured)

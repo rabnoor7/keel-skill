@@ -238,6 +238,24 @@ def main():
     if 'FREEZE' not in out:
         fails.append('status: an active freeze must show in the panel')
     os.remove(docs.STANCE)
+    # 1.4.1 · status must never be a FACADE: an undecided-with-choice checkpoint is a self-contradiction and
+    # MUST surface (as [!] in the bar + a NEEDS RECONCILING count), and --line must carry a ⚠ marker.
+    open(os.path.join(root, 'docs', 'roadmap.md'), 'w').write(
+        '# Roadmap\n\n## North star\nship it\n\n## Checkpoints\n'
+        '1. [reached] a\n   - done\n2. [undecided] b\n   - BUILT + verified\n')  # undecided BUT has a choice
+    rc, out = _rc(docs.cmd_status, line=False)
+    if '[!]' not in out or 'NEEDS RECONCILING' not in out or 'self-contradict' not in out:
+        fails.append('status: an undecided-with-choice checkpoint must show as [!] + NEEDS RECONCILING (no facade)')
+    rc, lout = _rc(docs.cmd_status, line=True)
+    if '⚠' not in lout:
+        fails.append('status --line: must carry a ⚠ marker when integrity issues exist (never look clean while hiding them)')
+    # a CONSISTENT roadmap (undecided, no choice) must NOT trip the contradiction signal
+    open(os.path.join(root, 'docs', 'roadmap.md'), 'w').write(
+        '# Roadmap\n\n## North star\nship it\n\n## Checkpoints\n1. [reached] a\n   - done\n2. [active] b\n')
+    rc, out = _rc(docs.cmd_status, line=False)
+    if 'self-contradict' in out:
+        fails.append('status: a consistent roadmap must NOT report a contradiction (cry-wolf)')
+    os.remove(os.path.join(root, 'docs', 'roadmap.md'))
 
     if fails:
         print('SELFTEST FAILED:')

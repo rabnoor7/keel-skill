@@ -1374,12 +1374,48 @@ def cmd_escalate(a):
         print(f'escalation #{a.id} {tgt["status"]}' + (f' → choice: {a.choice}' if a.choice else ''))
 
 
+def _clip(s, n):
+    """Truncate with a visible ellipsis so a cut reads as 'more here', never as a bug/data-loss."""
+    s = s or ''
+    return s if len(s) <= n else s[:n - 1].rstrip() + '…'
+
+
+def _status_health():
+    """The integrity signals `status` must NEVER hide, or the compact panel becomes a facade (the exact
+    anti-F9 failure a UX dogfood caught in 1.4.0). Reuses the SAME detectors rehydrate uses; status surfaces
+    the COUNT + a brief and defers to rehydrate for the complete digest — it summarizes, never under-reports."""
+    sig = []
+    rm = _roadmap()
+    if rm and rm.get('checkpoints'):
+        lying = [c for c in rm['checkpoints'] if c['status'] == 'undecided' and c['choices']]
+        if lying:
+            sig.append(f'{len(lying)} checkpoint(s) undecided yet carry a recorded choice — roadmap self-contradicts')
+        if not any(c['status'] == 'active' for c in rm['checkpoints']):
+            sig.append('no checkpoint marked active (no "you are here")')
+    if os.path.exists(VERIFY_STAMP):
+        missing = [d for d in _deliverable_dirs() if not os.path.isdir(os.path.join(ROOT, d))]
+        if missing:
+            sig.append(f'verify tracks {missing} — does not exist, staleness net is INERT (a "pass" can never go stale)')
+    if _contradictions():
+        sig.append(f'{len(_contradictions())} cross-tier contradiction(s) — an unmarked ADR is superseded')
+    if _anchor_staleness():
+        sig.append(f'anchor {len(_anchor_staleness())} edit(s) behind reality')
+    return sig
+
+
+def _cp_tag(c):
+    if c['status'] == 'reached': return 'x'
+    if c['status'] == 'active': return '~'
+    if c['status'] == 'undecided' and c['choices']: return '!'  # recorded-but-unreached = the contradiction, MUST be visible
+    return ' '
+
+
 def cmd_status(a):
     """The clean, glanceable VISIBILITY panel (T8): what keel HAS and what's OPEN for this project, always
     recomputed from disk — a lie-detector, never a stored/cached number. A pure readout: it NEVER gates,
     always exits 0 (rehydrate stays the heavy session-start digest that can block). `--line` prints the
     one-line ambient form the agent surfaces on capture-turns; the full panel is on-demand / after heavy runs.
-    Both are views of the SAME truth, so they can't disagree."""
+    Both are views of the SAME truth, so they can't disagree — and neither may hide an integrity signal."""
     ver = KEEL_VERSION
     prof = _read(PROFILE).strip() or '(unset)'
     decs = _dec_entries()
@@ -1391,12 +1427,12 @@ def cmd_status(a):
     st = _stance()
     contract = json.load(open(CONTRACT)) if os.path.exists(CONTRACT) else None
     verify = json.load(open(VERIFY_STAMP)) if os.path.exists(VERIFY_STAMP) else None
+    health = _status_health()
     phases = ''
     if rm and rm.get('checkpoints'):
-        tag = {'reached': 'x', 'active': '~', 'undecided': ' '}
-        bar = ''.join('[' + tag.get(c['status'], ' ') + ']' for c in rm['checkpoints'])
+        bar = ''.join('[' + _cp_tag(c) + ']' for c in rm['checkpoints'])
         here = next((c for c in rm['checkpoints'] if c['status'] == 'active'), None)
-        phases = bar + (f'  → you are here: #{here["n"]} {here["title"][:38]}' if here else '')
+        phases = bar + (f'  → you are here: #{here["n"]} {_clip(here["title"], 34)}' if here else '')
 
     if getattr(a, 'line', False):  # the ambient one-liner the agent surfaces when keel captured something
         bits = [f'keel {ver}']
@@ -1406,6 +1442,7 @@ def cmd_status(a):
             bits.append(f'phase {sum(1 for c in rm["checkpoints"] if c["status"] == "reached")}/{len(rm["checkpoints"])}')
         if st and st.get('freeze'): bits.append('FROZEN')
         if esc_open: bits.append(f'{len(esc_open)} blocked-on-you')
+        if health: bits.append(f'⚠{len(health)}')  # never let the one-liner look clean while integrity signals wait
         print('▸ ' + ' · '.join(bits) + '   → `keel status` for the full picture')
         return
 
@@ -1414,17 +1451,20 @@ def cmd_status(a):
     print(f'keel status · {os.path.basename(ROOT) or "project"}')
     print(f'keel {ver} · profile: {prof}')
     print('\nIN MEMORY')
-    print(f'  decisions  {len(decs):>3}' + (f'   latest: {decs[-1]["title"][:44]}' if decs else '   (none yet)'))
-    print(f'  journal    {len(js):>3}' + (f'   latest: {os.path.basename(js[-1])[:44]}' if js else '   (none yet)'))
+    print(f'  decisions  {len(decs):>3}' + (f'   latest: {_clip(decs[-1]["title"], 46)}' if decs else '   (none yet)'))
+    print(f'  journal    {len(js):>3}' + (f'   latest: {_clip(os.path.basename(js[-1]), 46)}' if js else '   (none yet)'))
     if rm:
-        print(f'  roadmap        {(rm["north_star"] or "(no north star)")[:44]}')
-        if phases: print(f'                 {phases}')
+        print(f'  roadmap    {_clip(rm["north_star"] or "(no north star)", 50)}')
+        if phases:
+            print(f'             {phases}')
+            if any(_cp_tag(c) == '!' for c in rm['checkpoints']):
+                print('             [!] = has a recorded choice but NOT marked reached — reconcile (status <n> reached)')
     if asks_open: print(f'  asks       {len(asks_open):>3}   open question(s)')
     print('\nOPEN NOW')
     opened = False
     if disc_open:
         opened = True
-        print(f'  discuss    {len(disc_open)} being shaped: ' + '; '.join(r.get('thread', '')[:32] for r in disc_open[:3]))
+        print(f'  discuss    {len(disc_open)} being shaped: ' + '; '.join(_clip(r.get('thread', ''), 32) for r in disc_open[:3]))
     if esc_open:
         opened = True
         print(f'  escalation {len(esc_open)} BLOCKED-ON-YOU (#' + ', #'.join(str(r['id']) for r in esc_open[:4]) + ')')
@@ -1437,10 +1477,18 @@ def cmd_status(a):
         print(f'  contract   {"approved" if contract.get("approved") else "unapproved"}, {"fresh" if fresh else "stale"}')
     if verify:
         opened = True
-        print(f'  verify     last audit: {verify.get("result", "?")}')
+        inert = os.path.exists(VERIFY_STAMP) and any(not os.path.isdir(os.path.join(ROOT, d)) for d in _deliverable_dirs())
+        print(f'  verify     last audit: {verify.get("result", "?")}'
+              + ('  ⚠ but tracker INERT (deliverable dir missing) — this "pass" can never go stale' if inert else ''))
     if not opened:
         print('  (nothing open — clean)')
-    print('\n→ full digest + any gates: docs.py rehydrate')
+    if health:  # the fix: status can never look authoritative while hiding integrity issues
+        print(f'\nNEEDS RECONCILING ({len(health)})')
+        for h in health:
+            print(f'  ⚠ {h}')
+        print('\n→ fixes + full digest: docs.py rehydrate')
+    else:
+        print('\n✓ no integrity issues.  → full digest: docs.py rehydrate')
     print('─' * W)
 
 
