@@ -110,6 +110,16 @@ never a question, never a special mode; keep it general (no different behavior w
 - **Don't muffle keel's voice.** When you're showing the user project *state*, show keel's own line/verdict —
   do NOT pipe keel's output through `head`/`tail`/`grep` into your own prose (the field corpus does this 280+
   times, stripping the `▸ keel`/`VERDICT:`/banner so the user never sees keel spoke). Quote keel; don't launder it.
+- **Show the user the actual recorded thing — not keel's handle, not your own paraphrase.** keel's internal
+  labels (`ADR 0002`, `checkpoint 6`, `contract`) are precise handles for *you*, not language for the user —
+  and restating them in your own words risks drift. When you tell the user what keel captured or is tracking,
+  name it by the **thing keel actually recorded** — its title, which keel prints: *"your call to go
+  project-per-department"*, not *"ADR 0002"* and not your own spin. Keep the bare handle **only** where the
+  user needs it to act (*"to change it: `supersede 0002`"*). **Mirror the user's register** — if *they* say
+  "ADR 2 / checkpoint", use it back; if they don't, don't introduce it. (A real-session audit found **5000+**
+  raw `ADR N`/`checkpoint`/`Layer N` tokens spoken straight at users — the bigger half of *"I can't understand
+  this"*. Relaying keel's `status --line` verbatim is fine — that's keel's own plain voice; parroting keel's
+  internal vocab in *your* sentences is the leak.)
 - **Status panel (infrequent, dissociated).** `docs.py status` prints the clean full readout (in-memory ·
   open-now). Show it **on demand** (the user asks "keel status" / "what's in memory") **inline in the same
   chat** — never make them fork a chat to see state (a fork is a stale snapshot). Also surface it **after a

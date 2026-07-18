@@ -398,10 +398,16 @@ def _dec_entries():
     out = []
     for p in _decisions():
         t = _read(p)
-        m = re.match(r'0*(\d+)', os.path.basename(p))
+        bn = os.path.basename(p)
+        m = re.match(r'0*(\d+)', bn)
         h = re.search(r'^#\s+(.+)$', t, re.M)
-        out.append({'num': int(m.group(1)) if m else 0,
-                    'title': (h.group(1).strip() if h else os.path.basename(p)), 'text': t, 'src': p})
+        if h:
+            title = h.group(1).strip()
+        else:  # no '# ' heading (body uses ## Decision etc.) — de-slug the filename, never show the raw slug
+            sm = re.match(r'(0*\d+)[-_](.+?)\.md$', bn)
+            title = (f'{int(sm.group(1)):04d} — {sm.group(2).replace("-", " ")}' if sm
+                     else bn[:-3].replace('-', ' ') if bn.endswith('.md') else bn)
+        out.append({'num': int(m.group(1)) if m else 0, 'title': title, 'text': t, 'src': p})
     df = _dec_file()
     if df:
         raw = _read(df)

@@ -373,6 +373,16 @@ def main():
     if 'short-label' not in os.path.basename(_lastdec):
         fails.append('decision: the positional should become the label when --from supplies the body')
 
+    # G1 title extraction: a decision with NO '# ' heading (body uses ## Decision, real case: faire-lead/0013)
+    # must de-slug the filename, never surface the raw hyphenated slug — the "show keel's title" doctrine
+    # relies on titles being clean. (0014-style: a '# ' heading below a '> SUPERSEDED' banner is found fine.)
+    _nh = os.path.join(root, 'docs', 'decisions', '0042-async-worker-model-deferred-scoring.md')
+    open(_nh, 'w').write('> **SUPERSEDED**\n\n## Context\nx\n\n## Decision — async model\ny\n')
+    _ent = next((e for e in docs._dec_entries() if e['src'].endswith('0042-async-worker-model-deferred-scoring.md')), None)
+    if not _ent or _ent['title'] != '0042 — async worker model deferred scoring':
+        fails.append(f"title fallback: a no-#-heading decision must de-slug the filename, got {_ent and _ent['title']!r}")
+    os.remove(_nh)
+
     if fails:
         print('SELFTEST FAILED:')
         for f in fails:
