@@ -2,18 +2,26 @@
 
 All notable changes to keel. Versions follow semver; `docs.py --version` reports the installed version.
 
-## [1.4.3] — 2026-07-18
+## [1.5.0] — 2026-07-18
 
-### Fixed (visibility + legibility — from a live field complaint + a point-by-point re-audit of real sessions)
-- **Presence-line fabrication.** The `▸ keel …` line the agent shows you was being *hand-written* — one real
-  session surfaced `Layer 6 active · ADR 0001 = single project (verified: 1 project live) · dependencies
-  supported`, none of which keel emits. `status --line` now carries the last captured record itself, so the
-  agent **relays the tool's line verbatim** instead of inventing one. SKILL.md §0c: relay keel's signature
-  line; never launder it through `head`/`tail`/`grep` (the field corpus did this 280+ times).
-- **"keel updated" signal (staleness).** A session loads keel's doctrine **once** and won't act on new
-  behavior until `/keel` is re-invoked — and nothing told you it had changed. `rehydrate` now stores a
-  `.last_seen` marker and, when the install moves past it, says so once ("keel updated X → Y … re-invoke
-  /keel"), then advances the marker. First run on an install is **silent** (byte-identical for non-adopters).
+### Visibility + legibility overhaul (driven by a live field complaint + a from-scratch re-audit of 94 real sessions)
+- **Presence-line fabrication → relay.** The `▸ keel …` line the agent shows you was being *hand-written* —
+  a real session surfaced `Layer 6 active · ADR 0001 = single project (verified: 1 project live) ·
+  dependencies supported`, none of which keel emits. `status --line` now carries the last captured record
+  itself, so the agent **relays the tool's line verbatim** instead of inventing one. SKILL.md §0c: relay
+  keel's signature line; never launder it through `head`/`tail`/`grep` (the field corpus did this 280+ times).
+- **Speak the recorded THING, not keel's jargon (prose legibility).** A real-session audit found **5000+**
+  raw `ADR N`/`checkpoint`/`Layer N` tokens spoken straight at users — the bigger half of "half of this is
+  non-understandable", and it lives in the agent's *own prose*, which only doctrine reaches. SKILL.md §0c:
+  name a captured thing by the **thing keel actually recorded** (its title), not the `ADR N` handle and not a
+  paraphrase (which drifts); keep the handle only when actionable; **mirror the user's register**. Titles are
+  now robust — a decision with no `# ` heading de-slugs its filename instead of showing the raw slug.
+- **"keel updated" signal, on ANY command (staleness + mid-session reach).** A session loads keel's doctrine
+  **once** and won't act on new behavior until `/keel` is re-invoked — and nothing told you it changed. keel
+  now stores a `.last_seen` marker and, when the install moves past it, says so **once** ("keel updated X → Y
+  … re-invoke /keel") — on rehydrate, on `status`, and on the next capture command (the field case: an update
+  pushed mid-session that never surfaced). `status --line` carries a compact `⟳ X→Y` token. First run on an
+  install is **silent** (byte-identical for non-adopters); `--version`/`--help` untouched.
 - **Fresh-capture.** The presence line now says **✓ just saved: <record>** for anything written since the
   last presence (keel reporting a capture the turn *after* it lands), reverting to **last:** once reported.
 - **Legibility.** `phase X/Y` → plain `X/Y steps done`; the panel's cryptic `[x][~][ ]` roadmap glyph bar →
@@ -23,8 +31,9 @@ All notable changes to keel. Versions follow semver; `docs.py --version` reports
 - **Lingering discuss threads** now show a quiet `(open Nd)` age past a 2-day threshold — same-session
   threads stay clean, so it never cries wolf.
 
-rehydrate/round-trip stays **byte-identical** — the invisible path is untouched; only the surfaces you see
-got better. Every fix carries a permanent selftest assertion.
+rehydrate/round-trip stays **byte-identical** on every real project tested (one intended exception: a
+decision whose title was a raw filename slug now reads as words). The invisible path is untouched; only the
+surfaces you see got better. Every fix carries a permanent selftest assertion.
 
 ## [1.4.2] — 2026-07-18
 
