@@ -2,6 +2,30 @@
 
 All notable changes to keel. Versions follow semver; `docs.py --version` reports the installed version.
 
+## [1.4.3] — 2026-07-18
+
+### Fixed (visibility + legibility — from a live field complaint + a point-by-point re-audit of real sessions)
+- **Presence-line fabrication.** The `▸ keel …` line the agent shows you was being *hand-written* — one real
+  session surfaced `Layer 6 active · ADR 0001 = single project (verified: 1 project live) · dependencies
+  supported`, none of which keel emits. `status --line` now carries the last captured record itself, so the
+  agent **relays the tool's line verbatim** instead of inventing one. SKILL.md §0c: relay keel's signature
+  line; never launder it through `head`/`tail`/`grep` (the field corpus did this 280+ times).
+- **"keel updated" signal (staleness).** A session loads keel's doctrine **once** and won't act on new
+  behavior until `/keel` is re-invoked — and nothing told you it had changed. `rehydrate` now stores a
+  `.last_seen` marker and, when the install moves past it, says so once ("keel updated X → Y … re-invoke
+  /keel"), then advances the marker. First run on an install is **silent** (byte-identical for non-adopters).
+- **Fresh-capture.** The presence line now says **✓ just saved: <record>** for anything written since the
+  last presence (keel reporting a capture the turn *after* it lands), reverting to **last:** once reported.
+- **Legibility.** `phase X/Y` → plain `X/Y steps done`; the panel's cryptic `[x][~][ ]` roadmap glyph bar →
+  plain `X/Y done · on now: #k title` (the 1.4.1 contradiction-honesty signal is independent of the bar, so
+  it survives); the presence line dropped its agent-facing command trailer (confused users when relayed);
+  journals show their **heading title**, not the `-slug.md` filename.
+- **Lingering discuss threads** now show a quiet `(open Nd)` age past a 2-day threshold — same-session
+  threads stay clean, so it never cries wolf.
+
+rehydrate/round-trip stays **byte-identical** — the invisible path is untouched; only the surfaces you see
+got better. Every fix carries a permanent selftest assertion.
+
 ## [1.4.2] — 2026-07-18
 
 ### Fixed (CRITICAL — silent memory loss, found by a field audit of real sessions)
