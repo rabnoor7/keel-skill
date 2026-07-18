@@ -116,6 +116,21 @@ except OSError:
     KEEL_VERSION = 'unknown'
 
 
+def _thread_age_note(r):
+    """Point 3: how long an open discuss thread has lingered, shown ONLY past a threshold so same-session
+    threads stay clean (never cry-wolf). A bare '(open Nd)' — the number IS the nudge; 45d makes its own
+    case without a judgment word. Uses the ts stored at open; absent/zero/malformed ts is silently skipped
+    (old threads predating ts storage must not render a bogus epoch-age)."""
+    ts = r.get('ts')
+    if not ts:
+        return ''
+    try:
+        age_days = int((time.time() - float(ts)) / 86400)
+    except (TypeError, ValueError):
+        return ''
+    return f'  (open {age_days}d)' if age_days >= 2 else ''
+
+
 def _version_notice():
     """Return a one-time 'keel updated X → Y' notice if the install moved since it last ran here, and
     advance the marker. First run on an install is SILENT (no prior version to compare) so fresh state is
@@ -558,7 +573,7 @@ def cmd_rehydrate(a):
     if disc_open:  # advisory by design: session start orients; the hard gate lives in `contract check`
         print(f'\n[~] DISCUSSION MODE — {len(disc_open)} thread(s) still being shaped (builds gate on these):')
         for r in disc_open[:4]:
-            print(f'    #{r["id"]} {r.get("thread", "")[:88]}')
+            print(f'    #{r["id"]} {r.get("thread", "")[:88]}{_thread_age_note(r)}')
         print('    → converge through cascading choices, then: docs.py discuss close <id> [--choice "..."]')
     print(f'\nPROFILE: {_read(PROFILE).strip() or "(unset — run: docs.py profile <name>)"}')
     mdirs = _memory_dirs()
@@ -1571,7 +1586,7 @@ def cmd_status(a):
     opened = False
     if disc_open:
         opened = True
-        print(f'  discuss    {len(disc_open)} being shaped: ' + '; '.join(_clip(r.get('thread', ''), 32) for r in disc_open[:3]))
+        print(f'  discuss    {len(disc_open)} being shaped: ' + '; '.join(_clip(r.get('thread', ''), 32) + _thread_age_note(r) for r in disc_open[:3]))
     if esc_open:
         opened = True
         print(f'  escalation {len(esc_open)} BLOCKED-ON-YOU (#' + ', #'.join(str(r['id']) for r in esc_open[:4]) + ')')

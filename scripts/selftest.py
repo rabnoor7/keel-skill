@@ -223,6 +223,18 @@ def main():
     if rc == 0:
         fails.append('T6 discuss: closing ONE of three parts must not release the gate (2 still open)')
 
+    # Point 3 · thread-age marker: a lingering open thread gets a factual '(open Nd)' past a 2-day threshold;
+    # a same-session (fresh) thread stays clean so the surface never becomes cry-wolf noise (points 4/7 ethos).
+    _tnow = docs.time.time()
+    if docs._thread_age_note({'ts': _tnow - 5 * 86400}) != '  (open 5d)':
+        fails.append('thread-age: a 5-day-old open thread must be marked (open 5d)')
+    if docs._thread_age_note({'ts': _tnow}) != '':
+        fails.append('thread-age: a fresh (same-session) thread must stay clean — no age note (anti-cry-wolf)')
+    if docs._thread_age_note({'ts': _tnow - 86400}) != '':
+        fails.append('thread-age: under the 2-day threshold must stay clean')
+    if docs._thread_age_note({}) != '':
+        fails.append('thread-age: a record with no ts must be silently skipped')
+
     # T8 · status is a pure READOUT — clean panel + one-line form, and it NEVER gates (always exit 0),
     # even under a freeze/blocking state that makes rehydrate/contract exit non-zero.
     rc, out = _rc(docs.cmd_status, line=False)
