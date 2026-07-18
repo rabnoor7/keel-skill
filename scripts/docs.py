@@ -168,27 +168,41 @@ def _thread_age_note(r):
     return f'  (open {age_days}d)' if age_days >= 2 else ''
 
 
-def _version_notice():
-    """Return a one-time 'keel updated X → Y' notice if the install moved since it last ran here, and
-    advance the marker. First run on an install is SILENT (no prior version to compare) so fresh state is
-    byte-identical to before this existed; 'unknown' version never writes or notices."""
+def _version_bump():
+    """(previous, current) if keel's install moved past .last_seen since it last ran here, else None.
+    PURE check — no write — so callers can advance the marker exactly once even when several surfaces
+    (rehydrate / any command / the --line token) could each detect the same bump. 'unknown' never bumps."""
     try:
         seen = open(LAST_SEEN).read().strip() if os.path.exists(LAST_SEEN) else None
     except OSError:
         seen = None
-    notice = None
-    if seen and seen != KEEL_VERSION and KEEL_VERSION != 'unknown':
-        # State only what keel KNOWS (the install moved); it cannot know whether this session loaded the
-        # doctrine, so the reload is CONDITIONAL — no asserting session history a stateless CLI can't see.
-        notice = (f'>>> keel updated {seen} → {KEEL_VERSION} since you last ran it — behavior may have changed.\n'
-                  f'>>> If keel\'s doctrine loaded earlier this session, re-invoke /keel to refresh it. Changed: CHANGELOG.md')
+    return (seen, KEEL_VERSION) if (seen and seen != KEEL_VERSION and KEEL_VERSION != 'unknown') else None
+
+
+def _mark_version_seen():
+    """Advance .last_seen to the current version (idempotent; first run on an install writes it SILENTLY so
+    fresh state stays byte-identical to before this existed; 'unknown' never writes)."""
+    try:
+        seen = open(LAST_SEEN).read().strip() if os.path.exists(LAST_SEEN) else None
+    except OSError:
+        seen = None
     if seen != KEEL_VERSION and KEEL_VERSION != 'unknown':
         try:
             with open(LAST_SEEN, 'w') as fh:
                 fh.write(KEEL_VERSION)
         except OSError:
             pass
-    return notice
+
+
+def _version_notice():
+    """One-time 'keel updated X → Y' notice (or None), advancing the marker. State only what keel KNOWS (the
+    install moved) — it can't know whether this session loaded the doctrine, so the reload is CONDITIONAL."""
+    vb = _version_bump()
+    _mark_version_seen()
+    if not vb:
+        return None
+    return (f'>>> keel updated {vb[0]} → {KEEL_VERSION} since you last ran it — behavior may have changed.\n'
+            f'>>> If keel\'s doctrine loaded earlier this session, re-invoke /keel to refresh it. Changed: CHANGELOG.md')
 
 
 def _now(): return datetime.datetime.now()
@@ -1612,6 +1626,9 @@ def cmd_status(a):
         if st and st.get('freeze'): bits.append('FROZEN')
         if esc_open: bits.append(f'{len(esc_open)} blocked-on-you')
         if health: bits.append(f'⚠{len(health)}')  # never let the one-liner look clean while integrity signals wait
+        _vb = _version_bump()  # G3: mid-session update signal as a compact single-line token (keeps --line one line)
+        if _vb: bits.append(f'⟳ {_vb[0]}→{KEEL_VERSION}')
+        _mark_version_seen()
         print('▸ ' + ' · '.join(bits))  # pure user-facing state — no command trailer (agent-facing; confuses a user when relayed)
         return
 
@@ -2472,6 +2489,14 @@ def main():
     if ROOT != os.path.realpath(os.getcwd()) and not os.environ.get('KEEL_ROOT'):
         sys.stderr.write(f'keel: anchored to project root {ROOT} (found a .keel/ above the current dir) — '
                          'set KEEL_ROOT if that is not your project.\n')
+    # G3: a mid-session keel update must be visible on ANY command, not just rehydrate (the field case: an
+    # update pushed mid-session that never surfaced). Fire the notice once per bump on stdout before dispatch.
+    # rehydrate places its own (nicer, after its banner) and `status --line` carries a compact ⟳ token — both
+    # self-handle, so exclude them here; --version/--help already exited inside parse_args.
+    if a.fn is not cmd_rehydrate and not (a.fn is cmd_status and getattr(a, 'line', False)):
+        _vn = _version_notice()
+        if _vn:
+            print(_vn + '\n')
     a.fn(a)
 
 
