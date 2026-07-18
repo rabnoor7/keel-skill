@@ -80,6 +80,10 @@ STATE = os.path.join(ROOT, '.keel')
 PENDING = os.path.join(STATE, 'pending.jsonl')
 CONTRACT = os.path.join(STATE, 'contract.json')
 PROFILE = os.path.join(STATE, 'profile')
+# Fresh-capture (user idea): the ts of the newest record the LAST presence-line already showed you, so the
+# next `status --line` can say "✓ just saved" for anything written since — keel reports a capture the turn
+# after it lands, instead of carrying it silently. Per-project (captures are per-project); advisory bookkeeping.
+LAST_STATUS = os.path.join(STATE, '.last_status')
 WHITEBOARD = os.path.join(STATE, 'whiteboard.log')
 CLAIMS = os.path.join(STATE, 'claims')
 VERIFY_DIR = os.path.join(STATE, 'verify')
@@ -114,6 +118,39 @@ try:
     KEEL_VERSION = open(os.path.join(SKILL_ROOT, 'VERSION')).read().strip()
 except OSError:
     KEEL_VERSION = 'unknown'
+
+
+def _journal_title(path):
+    """The journal's own heading (# title) — what it was actually named — not the raw filename slug (a
+    hyphenated '-w.md' reads as gibberish to a user). Falls back to the de-slugged, de-dated filename."""
+    try:
+        for line in open(path):
+            s = line.strip()
+            if s.startswith('# '):
+                return s[2:].strip()
+    except OSError:
+        pass
+    return os.path.basename(path)[11:-3].replace('-', ' ')
+
+
+def _last_status_ts():
+    """The newest-record ts the last presence line already surfaced (float), or None on the first-ever fire.
+    None ⇒ conservative: the first presence line says 'last:', never 'just saved' (honesty — a record that
+    predates any presence isn't news; only a capture made SINCE a prior presence is)."""
+    try:
+        raw = open(LAST_STATUS).read().strip()
+        return float(raw) if raw else None
+    except (OSError, ValueError):
+        return None
+
+
+def _mark_status_ts(ts):
+    try:
+        os.makedirs(STATE, exist_ok=True)
+        with open(LAST_STATUS, 'w') as fh:
+            fh.write(repr(float(ts)))
+    except (OSError, TypeError, ValueError):
+        pass
 
 
 def _thread_age_note(r):
@@ -1537,17 +1574,18 @@ def cmd_status(a):
     verify = json.load(open(VERIFY_STAMP)) if os.path.exists(VERIFY_STAMP) else None
     health = _status_health()
     phases = ''
-    if rm and rm.get('checkpoints'):
-        bar = ''.join('[' + _cp_tag(c) + ']' for c in rm['checkpoints'])
-        here = next((c for c in rm['checkpoints'] if c['status'] == 'active'), None)
-        phases = bar + (f'  → you are here: #{here["n"]} {_clip(here["title"], 34)}' if here else '')
+    if rm and rm.get('checkpoints'):  # plain "X/Y done · on now: #k title", not a cryptic [x][~][ ] glyph bar
+        cps = rm['checkpoints']
+        here = next((c for c in cps if c['status'] == 'active'), None)
+        phases = (f'{sum(1 for c in cps if c["status"] == "reached")}/{len(cps)} done'
+                  + (f'  ·  on now: #{here["n"]} {_clip(here["title"], 34)}' if here else ''))
 
     if getattr(a, 'line', False):  # the ambient one-liner the agent surfaces when keel captured something
         bits = [f'keel {ver}']
         if decs: bits.append(f'{len(decs)} decision(s)')
         if disc_open: bits.append(f'{len(disc_open)} thread(s) open')
-        if rm and rm.get('checkpoints'):
-            bits.append(f'phase {sum(1 for c in rm["checkpoints"] if c["status"] == "reached")}/{len(rm["checkpoints"])}')
+        if rm and rm.get('checkpoints'):  # plain "X/Y steps done", not "phase X/Y" (a user can't parse "phase")
+            bits.append(f'{sum(1 for c in rm["checkpoints"] if c["status"] == "reached")}/{len(rm["checkpoints"])} steps done')
         # the most-recent durable record — so the line itself SHOWS what keel last captured; the agent relays
         # this exact line rather than hand-writing a "noted: …" (the fabrication the §0c example used to invite).
         _last, _lt = None, -1.0
@@ -1557,15 +1595,18 @@ def cmd_status(a):
             if _m > _lt: _lt, _last = _m, f'decision "{_t[:30]}"'
         if js:
             _m = _mtime(js[-1])
-            if _m > _lt: _lt, _last = _m, f'journal "{os.path.basename(js[-1])[11:-3][:30]}"'
+            if _m > _lt: _lt, _last = _m, f'journal "{_journal_title(js[-1])[:30]}"'
         if disc_open:
             _m = disc_open[-1].get('ts', 0)
             if _m > _lt: _lt, _last = _m, f'thread "{disc_open[-1].get("thread", "")[:30]}"'
-        if _last: bits.append('last: ' + _last)
+        if _last:  # fresh-capture: "✓ just saved" for a record written since the last presence; else "last:"
+            _prev = _last_status_ts()
+            bits.append(('✓ just saved: ' if (_prev is not None and _lt > _prev) else 'last: ') + _last)
+            _mark_status_ts(_lt)
         if st and st.get('freeze'): bits.append('FROZEN')
         if esc_open: bits.append(f'{len(esc_open)} blocked-on-you')
         if health: bits.append(f'⚠{len(health)}')  # never let the one-liner look clean while integrity signals wait
-        print('▸ ' + ' · '.join(bits) + '   → `keel status` for the full picture')
+        print('▸ ' + ' · '.join(bits))  # pure user-facing state — no command trailer (agent-facing; confuses a user when relayed)
         return
 
     W = 64
@@ -1574,13 +1615,13 @@ def cmd_status(a):
     print(f'keel {ver} · profile: {prof}')
     print('\nIN MEMORY')
     print(f'  decisions  {len(decs):>3}' + (f'   latest: {_clip(decs[-1]["title"], 46)}' if decs else '   (none yet)'))
-    print(f'  journal    {len(js):>3}' + (f'   latest: {_clip(os.path.basename(js[-1]), 46)}' if js else '   (none yet)'))
+    print(f'  journal    {len(js):>3}' + (f'   latest: {_clip(_journal_title(js[-1]), 46)}' if js else '   (none yet)'))
     if rm:
         print(f'  roadmap    {_clip(rm["north_star"] or "(no north star)", 50)}')
         if phases:
             print(f'             {phases}')
             if any(_cp_tag(c) == '!' for c in rm['checkpoints']):
-                print('             [!] = has a recorded choice but NOT marked reached — reconcile (status <n> reached)')
+                print('             [!] a step has a decision recorded but is NOT marked done — reconcile (status <n> reached)')
     if asks_open: print(f'  asks       {len(asks_open):>3}   open question(s)')
     print('\nOPEN NOW')
     opened = False

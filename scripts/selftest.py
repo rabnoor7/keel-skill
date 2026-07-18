@@ -245,6 +245,27 @@ def main():
         fails.append(f'status --line: must be a single line starting with ▸ (rc={rc}, lines={out.count(chr(10))})')
     if 'last:' not in out:  # point-1: the line must SHOW the last captured record, so the agent relays it (not hand-write)
         fails.append('status --line: must name the last captured record (last: …) when records exist — the fabrication fix')
+
+    # Fresh-capture (user idea): first presence is conservative ("last:", not "just saved" — a pre-existing record
+    # isn't news); a capture made SINCE a prior presence flips to "✓ just saved", then reverts (reported once).
+    _saved_ls = docs.LAST_STATUS
+    docs.LAST_STATUS = os.path.join(root, '.keel', '.last_status_test')
+    if os.path.exists(docs.LAST_STATUS):
+        os.remove(docs.LAST_STATUS)
+    _rc0, _o1 = _rc(docs.cmd_status, line=True)
+    if '✓ just saved' in _o1 or 'last:' not in _o1:
+        fails.append('fresh-capture: the FIRST presence must say "last:", never "just saved" (no marker yet)')
+    _newdec = os.path.join(root, 'docs', 'decisions', '0099-fresh.md')
+    open(_newdec, 'w').write('# 0099 — a fresh call\nStatus: accepted\n')
+    os.utime(_newdec, (docs.time.time() + 1000, docs.time.time() + 1000))  # strictly-later than the marker
+    _rc0, _o2 = _rc(docs.cmd_status, line=True)
+    if '✓ just saved' not in _o2:
+        fails.append('fresh-capture: a record written since the last presence must show "✓ just saved"')
+    _rc0, _o3 = _rc(docs.cmd_status, line=True)
+    if '✓ just saved' in _o3:
+        fails.append('fresh-capture: nothing new since ⇒ must revert to "last:" (a capture is reported once)')
+    os.remove(_newdec)
+    docs.LAST_STATUS = _saved_ls
     open(docs.STANCE, 'w').write(_json.dumps({'name': 'freeze', 'freeze': True}))  # blocking state...
     rc, out = _rc(docs.cmd_status, line=False)
     if rc != 0:

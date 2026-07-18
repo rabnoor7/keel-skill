@@ -98,10 +98,12 @@ never a question, never a special mode; keep it general (no different behavior w
 - **Presence line — RELAY the tool, never hand-write it.** On a turn where keel actually **captured**
   something (a decision, journal, discuss thread, checkpoint) OR has open/blocking state, run
   `docs.py status --line` and surface its output **verbatim** — it already reads e.g.
-  `▸ keel 1.4.2 · 14 decision(s) · phase 3/6 · last: decision "auth via JWT" · ⚠2`. Do **not** paraphrase or
-  invent your own `▸ keel · noted: …` line — a hand-written line drifts from the truth (and diverges from the
-  tool). The `▸ keel …` prefix **is keel's signature**: relaying it verbatim is what lets the user tell
-  keel's voice from yours (the #1 field complaint: *"I can't tell if this is from keel or from you"*). You may
+  `▸ keel 1.4.2 · 14 decision(s) · 3/6 steps done · ✓ just saved: decision "auth via JWT" · ⚠2`. The line
+  says **✓ just saved: …** for a record written since the last presence (keel reporting the capture the turn
+  after it lands) and **last: …** otherwise — that's the tool's call, not yours to editorialize. Do **not**
+  paraphrase or invent your own `▸ keel · noted: …` line — a hand-written line drifts from the truth (and
+  diverges from the tool). The `▸ keel …` prefix **is keel's signature**: relaying it verbatim is what lets
+  the user tell keel's voice from yours (the #1 field complaint: *"I can't tell if this is from keel or from you"*). You may
   add a short plain-language note of what you just did **around** the line, but the `▸ keel …` line stays
   exactly as the tool prints it. On a truly quiet turn (nothing captured, nothing open), stay silent — don't
   manufacture noise.
