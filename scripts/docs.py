@@ -993,7 +993,7 @@ def cmd_contract(a):
         by, echo = (getattr(a, 'by', None) or '').strip(), (getattr(a, 'echo', None) or '').strip()
         if a.approved and not (by and echo):
             print('contract set --approved: needs --by <who> + --echo "<the user\'s actual approving words>" '
-                  '— a pre-approved contract carries the same attribution approve does'); sys.exit(1)
+                  '— the pre-approved shortcut records the same attribution the normal approve does'); sys.exit(1)
         rec = {'plan': plan, 'hash': _hash(plan), 'ts': time.time(), 'approved': bool(a.approved)}
         if a.approved:
             rec['by'], rec['echo'] = by, echo
@@ -1003,10 +1003,15 @@ def cmd_contract(a):
     elif a.action == 'approve':
         if not os.path.exists(CONTRACT):
             sys.exit('no contract to approve — contract set first')
-        by, echo = (getattr(a, 'by', None) or '').strip(), (getattr(a, 'echo', None) or '').strip()
+        by_raw, echo_raw = getattr(a, 'by', None), getattr(a, 'echo', None)
+        by, echo = (by_raw or '').strip(), (echo_raw or '').strip()
         if not (by and echo):
+            if (by_raw is not None or echo_raw is not None):
+                print('contract approve: --by/--echo given but empty — the echo must carry the user\'s '
+                      'actual approving words (whitespace does not count)'); sys.exit(1)
             print('contract approve: needs --by <who> + --echo "<the user\'s actual approving words>" '
-                  '— quote them verbatim; an unattributed approval is the self-flippable flag this replaces'); sys.exit(1)
+                  '— quote them verbatim, so the approval records who granted it and on what words, '
+                  'not just a flag'); sys.exit(1)
         c = json.load(open(CONTRACT)); c.update(approved=True, ts=time.time(), by=by, echo=echo); json.dump(c, open(CONTRACT, 'w'))
         print('contract approved — build may proceed.')
     elif a.action == 'check':
@@ -1029,13 +1034,13 @@ def cmd_contract(a):
                   'A fuzzy outcome must be broken into aligned checkpoints before any build.'
                   '\n  → docs.py checkpoint add "<layer>"  (per layer, align each through choices)'); sys.exit(1)
         if not os.path.exists(CONTRACT):
-            print('contract check: NONE — no build without a signed contract.'); sys.exit(1)
+            print('contract check: NONE — no build without an approved contract.'); sys.exit(1)
         c = json.load(open(CONTRACT))
         fresh = (time.time() - c.get('ts', 0)) < (a.window or 3600)
         if c.get('approved') and fresh:
-            attrib = (f'  approved by {c["by"]}: "{str(c["echo"])[:80]}"'
+            attrib = (f' approved by {c["by"]}: "{str(c["echo"])[:80]}"'
                       if c.get('by') and c.get('echo') else '')
-            print('contract check: ✅ signed + fresh.' + attrib)
+            print('contract check: ✅ approved + fresh.' + attrib)
             _routing_note(c.get('plan', ''))  # model-facing cost hint; never blocks the build
             return
         print(f'contract check: ✗ approved={c.get("approved")} fresh={fresh} — do not build.'); sys.exit(1)

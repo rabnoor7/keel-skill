@@ -153,15 +153,15 @@ def main():
     rc, out = _rc(docs.cmd_contract, action='approve', **_c)
     if rc == 0 or '--echo' not in out:
         fails.append('attribution: bare approve (no --by/--echo) must refuse and name the flags')
-    rc, _ = _rc(docs.cmd_contract, action='approve', **{**_c, 'by': 'user', 'echo': '   '})
-    if rc == 0:
-        fails.append('attribution: empty/whitespace echo must refuse')
+    rc, out = _rc(docs.cmd_contract, action='approve', **{**_c, 'by': 'user', 'echo': '   '})
+    if rc == 0 or 'empty' not in out:
+        fails.append('attribution: whitespace echo must refuse AND say the echo is empty (blind-UX fix)')
     rc, _ = _rc(docs.cmd_contract, action='approve', **{**_c, 'by': 'user', 'echo': 'yes build it'})
     if rc != 0:
         fails.append('attribution: approve with --by + --echo must succeed')
     rc, out = _rc(docs.cmd_contract, action='check', **_c)
-    if rc != 0 or 'approved by user: "yes build it"' not in out:
-        fails.append('attribution: check must show approved-by + echo (agent-facing)')
+    if rc != 0 or 'approved by user: "yes build it"' not in out or '✅ approved + fresh' not in out:
+        fails.append('attribution: check must show approved-banner (never "signed") + approved-by + echo')
     rc, out = _rc(docs.cmd_contract, action='set', **{**_c, 'content': 'side door', 'approved': True})
     if rc == 0 or '--echo' not in out:
         fails.append('attribution: set --approved without --by/--echo must refuse (side door)')
