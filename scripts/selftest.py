@@ -123,8 +123,9 @@ def main():
             return 0, buf2.getvalue()
         except SystemExit as e:
             return (e.code if isinstance(e.code, int) else 1), buf2.getvalue()
-    _c = dict(content=None, from_file=None, approved=False, window=None)
-    _rc(docs.cmd_contract, action='set', **{**_c, 'content': 'plan', 'approved': True})
+    _c = dict(content=None, from_file=None, approved=False, window=None, by=None, echo=None)
+    _rc(docs.cmd_contract, action='set', **{**_c, 'content': 'plan', 'approved': True,
+                                            'by': 'selftest', 'echo': 'go ahead'})
     rc, out = _rc(docs.cmd_contract, action='check', **_c)
     if rc != 0:
         fails.append(f'discuss: contract check must pass with no open thread (rc={rc}: {out.strip()[-100:]})')
@@ -146,6 +147,31 @@ def main():
     rc, _ = _rc(docs.cmd_discuss, action='close', id=1, choice=None, to_decision=None, thread=None)
     if rc == 0:
         fails.append('discuss: re-closing a settled thread must refuse (settled is settled)')
+
+    # R2 unit 1 · echo-field approval floor (locked forever): an unattributed approval must refuse
+    _rc(docs.cmd_contract, action='set', **{**_c, 'content': 'echo-floor plan'})
+    rc, out = _rc(docs.cmd_contract, action='approve', **_c)
+    if rc == 0 or '--echo' not in out:
+        fails.append('attribution: bare approve (no --by/--echo) must refuse and name the flags')
+    rc, _ = _rc(docs.cmd_contract, action='approve', **{**_c, 'by': 'user', 'echo': '   '})
+    if rc == 0:
+        fails.append('attribution: empty/whitespace echo must refuse')
+    rc, _ = _rc(docs.cmd_contract, action='approve', **{**_c, 'by': 'user', 'echo': 'yes build it'})
+    if rc != 0:
+        fails.append('attribution: approve with --by + --echo must succeed')
+    rc, out = _rc(docs.cmd_contract, action='check', **_c)
+    if rc != 0 or 'approved by user: "yes build it"' not in out:
+        fails.append('attribution: check must show approved-by + echo (agent-facing)')
+    rc, out = _rc(docs.cmd_contract, action='set', **{**_c, 'content': 'side door', 'approved': True})
+    if rc == 0 or '--echo' not in out:
+        fails.append('attribution: set --approved without --by/--echo must refuse (side door)')
+    import json as _cj
+    _rc(docs.cmd_contract, action='set', **{**_c, 'content': 'legacy shape'})
+    _cj.dump({'plan': 'legacy', 'hash': 'x', 'ts': docs.time.time() - 7200, 'approved': True},
+             open(os.path.join('.keel', 'contract.json'), 'w'))
+    rc, out = _rc(docs.cmd_contract, action='check', **_c)
+    if rc == 0 or 'fresh=False' not in out:
+        fails.append('attribution: legacy fielded-less contract must expire cleanly, not crash')
 
     # T2 · FALSE-claim fixes locked forever (1.3.1):
     import json as _json

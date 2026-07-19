@@ -990,13 +990,24 @@ def cmd_contract(a):
         if not plan.strip():
             sys.exit('contract set: needs --content or --from (the plan text)')
         _ensure(STATE)
-        json.dump({'plan': plan, 'hash': _hash(plan), 'ts': time.time(), 'approved': bool(a.approved)}, open(CONTRACT, 'w'))
+        by, echo = (getattr(a, 'by', None) or '').strip(), (getattr(a, 'echo', None) or '').strip()
+        if a.approved and not (by and echo):
+            print('contract set --approved: needs --by <who> + --echo "<the user\'s actual approving words>" '
+                  '— a pre-approved contract carries the same attribution approve does'); sys.exit(1)
+        rec = {'plan': plan, 'hash': _hash(plan), 'ts': time.time(), 'approved': bool(a.approved)}
+        if a.approved:
+            rec['by'], rec['echo'] = by, echo
+        json.dump(rec, open(CONTRACT, 'w'))
         print(f'contract set (hash {_hash(plan)}, approved={bool(a.approved)}).'
               + ('' if a.approved else ' Get user approval, then: contract approve'))
     elif a.action == 'approve':
         if not os.path.exists(CONTRACT):
             sys.exit('no contract to approve — contract set first')
-        c = json.load(open(CONTRACT)); c['approved'] = True; c['ts'] = time.time(); json.dump(c, open(CONTRACT, 'w'))
+        by, echo = (getattr(a, 'by', None) or '').strip(), (getattr(a, 'echo', None) or '').strip()
+        if not (by and echo):
+            print('contract approve: needs --by <who> + --echo "<the user\'s actual approving words>" '
+                  '— quote them verbatim; an unattributed approval is the self-flippable flag this replaces'); sys.exit(1)
+        c = json.load(open(CONTRACT)); c.update(approved=True, ts=time.time(), by=by, echo=echo); json.dump(c, open(CONTRACT, 'w'))
         print('contract approved — build may proceed.')
     elif a.action == 'check':
         st = _stance()
@@ -1022,7 +1033,9 @@ def cmd_contract(a):
         c = json.load(open(CONTRACT))
         fresh = (time.time() - c.get('ts', 0)) < (a.window or 3600)
         if c.get('approved') and fresh:
-            print('contract check: ✅ signed + fresh.')
+            attrib = (f'  approved by {c["by"]}: "{str(c["echo"])[:80]}"'
+                      if c.get('by') and c.get('echo') else '')
+            print('contract check: ✅ signed + fresh.' + attrib)
             _routing_note(c.get('plan', ''))  # model-facing cost hint; never blocks the build
             return
         print(f'contract check: ✗ approved={c.get("approved")} fresh={fresh} — do not build.'); sys.exit(1)
@@ -2407,6 +2420,7 @@ def main():
     p.set_defaults(fn=cmd_supersede)
     p = sub.add_parser('contract'); p.add_argument('action', choices=['set', 'approve', 'check'])
     p.add_argument('--content'); p.add_argument('--from', dest='from_file'); p.add_argument('--approved', action='store_true')
+    p.add_argument('--by'); p.add_argument('--echo')
     p.add_argument('--window', type=int); p.set_defaults(fn=cmd_contract)
     p = sub.add_parser('verify'); p.add_argument('action', choices=['init', 'run', 'done', 'sync']); p.set_defaults(fn=cmd_verify)
     p = sub.add_parser('coverage'); p.add_argument('action', choices=['init', 'check']); p.add_argument('source')

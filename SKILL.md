@@ -168,6 +168,9 @@ approved the plan first.
   Resolve everything else yourself and state it. Then **STOP — as many questions as needed, zero more.**
 - Emit the **BUILD CONTRACT** (files · schema/interfaces · edge-cases · data-flow/ownership · will-NOT-do)
   with a recommended default. `docs.py contract` records it; build wrappers refuse without it.
+  Approval is attributed: `contract approve --by user --echo "<their actual approving words>"` — quote
+  them verbatim, never paraphrase or invent; the echo is agent-side audit bookkeeping, never parroted
+  back to the user unprompted.
 - **Pressure cannot skip *showing* the plan** ("just build it" before a contract → still show it first).
   **But once the contract is shown, a clear "go / build it / ship it" IS approval of your stated
   default — proceed (state the default, verify, journal); do NOT re-ask.** Re-confirming after approval
