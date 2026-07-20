@@ -1069,7 +1069,7 @@ def cmd_contract(a):
         c = json.load(open(CONTRACT))
         fresh = (time.time() - c.get('ts', 0)) < (a.window or 3600)
         if c.get('approved') and fresh:
-            attrib = (f' approved by {c["by"]} (self-reported): "{str(c["echo"])[:80]}"'
+            attrib = (f' approved by {c["by"]} (self-reported): "{_clip(str(c["echo"]), 80)}"'
                       if c.get('by') and c.get('echo') else '')
             print('contract check: ✅ approved + fresh.' + attrib)
             _routing_note(c.get('plan', ''))  # model-facing cost hint; never blocks the build
@@ -1661,13 +1661,13 @@ def cmd_status(a):
         _dp = _decisions()
         if _dp and decs:
             _m = _mtime(_dp[-1]); _t = re.sub(r'^\d{3,4}\s*[—-]\s*', '', decs[-1]['title']).strip()
-            if _m > _lt: _lt, _last = _m, f'decision "{_t[:30]}"'
+            if _m > _lt: _lt, _last = _m, f'decision "{_clip(_t, 30)}"'
         if js:
             _m = _mtime(js[-1])
-            if _m > _lt: _lt, _last = _m, f'journal "{_journal_title(js[-1])[:30]}"'
+            if _m > _lt: _lt, _last = _m, f'journal "{_clip(_journal_title(js[-1]), 30)}"'
         if disc_open:
             _m = disc_open[-1].get('ts', 0)
-            if _m > _lt: _lt, _last = _m, f'thread "{disc_open[-1].get("thread", "")[:30]}"'
+            if _m > _lt: _lt, _last = _m, f'thread "{_clip(disc_open[-1].get("thread", ""), 30)}"'
         if _last:  # fresh-capture: "✓ just saved" for a record written since the last presence; else "last:"
             _prev = _last_status_ts()
             bits.append(('✓ just saved: ' if (_prev is not None and _lt > _prev) else 'last: ') + _last)
@@ -1792,7 +1792,12 @@ def cmd_discuss(a):
                     print(f'no open discussion #{a.id} — already closed{by}. (settled: do not re-ask it)'); sys.exit(1)
                 print(f'no open discussion #{a.id}'); sys.exit(1)
             their = tgt.get('writer')
-            if their and their != me and getattr(a, 'writer', None) != their:
+            # pid-fallback labels are per-invocation noise (a fresh pid every call): gating on them made
+            # NORMAL same-session open->close trip the guard — cry-wolf, battery-caught. Only an EXPLICIT
+            # label mismatch gates; the guard keeps its ratified intent (catch ACCIDENTAL cross-session).
+            import re as _re
+            _noise = lambda w: not w or bool(_re.fullmatch(r'pid\d+', w))
+            if their and their != me and not _noise(their) and getattr(a, 'writer', None) != their:
                 print(f'discuss close: #{a.id} was opened under the writer label "{their}"; you are running '
                       f'as "{me}". Labels are self-reported, never verified — this catches an ACCIDENTAL '
                       f'cross-session close, it is not a permission check. To close it deliberately: '
@@ -2363,7 +2368,7 @@ def _print_roadmap(rm):
         here = '   <- YOU ARE HERE' if active and c['n'] == active['n'] else ''
         print(f'   {tag.get(c["status"], "[ ]")} {c["n"]}. {c["title"]}{here}')
         for ch in c['choices']:
-            print(f'         choice: {ch[:90]}')
+            print(f'         choice: {_clip(ch, 90)}')
     if nxt:
         print(f'   → next undecided checkpoint: #{nxt["n"]} {nxt["title"]} — align it through questions before building on it')
 

@@ -2,6 +2,21 @@
 
 All notable changes to keel. Versions follow semver; `docs.py --version` reports the installed version.
 
+## [1.6.1] — 2026-07-21
+
+### Two fixes from the first blind drift battery (real-usage findings, both locked)
+
+- **The cross-writer guard no longer cries wolf.** Every CLI call gets a fresh process id, so a normal
+  same-session `discuss open` → `close` (separate shell invocations — the standard agent pattern)
+  tripped the accidental-cross-session guard and demanded a `--writer` retry. The guard now fires only
+  when an EXPLICIT writer label (KEEL_WRITER / --as) mismatches; pid-fallback labels never gate — they
+  are per-invocation noise, and a guard that fires on noise trains everyone to ignore it. Its ratified
+  intent (catch ACCIDENTAL cross-session closes) is unchanged and still enforced for labeled sessions.
+- **Clipped text now says so.** The approval echo, the presence line's last-capture titles, and roadmap
+  choice lines truncated mid-word with no ellipsis — a clipped tail read as data loss ("…go ahead and
+  bu"). All now clip through the shared ellipsis helper. Intended visible diff: an `…` appears where
+  long strings were already being cut silently.
+
 ## [1.6.0] — 2026-07-20
 
 ### Record integrity: who approved it, and who settled it (two fixes, both earned by real failures)

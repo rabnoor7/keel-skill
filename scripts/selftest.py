@@ -222,6 +222,25 @@ def main():
         fails.append(f'concurrency: two-writer storm must yield 12 unique new ids, zero lost/duplicated '
                      f'(got {len(set(_after) - _before)} new, {len(_after) - len(set(_after))} dup)')
 
+    # 1.6.1 locks: pid-fallback labels never gate (battery-caught cry-wolf); explicit labels still do
+    rc, out = _rc(docs.cmd_discuss, action='open', **{**_d, 'thread': 'pid noise thread'})
+    _pid_id = int(out.split('#')[1].split(' ')[0])
+    rc, out = _rc(docs.cmd_discuss, action='close', **{**_d, 'id': _pid_id, 'choice': 'done'})
+    if rc != 0:
+        fails.append('1.6.1: same-session close across pid-fallback labels must NOT gate (cry-wolf fix)')
+    for _r9 in docs._discuss_rows():  # storm threads are pid-labeled: closing them exercises the fix x12
+        if _r9.get('status') == 'open':
+            rc, out = _rc(docs.cmd_discuss, action='close', **{**_d, 'id': _r9['id'], 'choice': 'cleanup',
+                                                               'writer': _r9.get('writer')})
+            if rc != 0:
+                fails.append(f'1.6.1: pid-labeled thread #{_r9["id"]} refused a same-session close ({out[-80:]})')
+    rc, out = _rc(docs.cmd_contract, action='set', **{**_c, 'content': 'long echo plan'})
+    rc, out = _rc(docs.cmd_contract, action='approve', **{**_c, 'by': 'user',
+                                                          'echo': 'x' * 95})
+    rc, out = _rc(docs.cmd_contract, action='check', **_c)
+    if rc != 0 or '…' not in out:
+        fails.append(f'1.6.1: clipped approval echo must end with an ellipsis, never cut bare (rc={rc})')
+
     # T2 · FALSE-claim fixes locked forever (1.3.1):
     import json as _json
     docs._ensure(docs.STATE)
