@@ -160,7 +160,7 @@ def main():
     if rc != 0:
         fails.append('attribution: approve with --by + --echo must succeed')
     rc, out = _rc(docs.cmd_contract, action='check', **_c)
-    if rc != 0 or 'approved by user: "yes build it"' not in out or '✅ approved + fresh' not in out:
+    if rc != 0 or 'approved by user (self-reported): "yes build it"' not in out or '✅ approved + fresh' not in out:
         fails.append('attribution: check must show approved-banner (never "signed") + approved-by + echo')
     rc, out = _rc(docs.cmd_contract, action='set', **{**_c, 'content': 'side door', 'approved': True})
     if rc == 0 or '--echo' not in out:

@@ -1040,7 +1040,8 @@ def cmd_contract(a):
                 print('contract approve: --by/--echo given but empty — the echo must carry the user\'s '
                       'actual approving words (whitespace does not count)'); sys.exit(1)
             print('contract approve: needs --by <who> + --echo "<the user\'s actual approving words>" '
-                  '— quote them verbatim, so the approval records who granted it and on what words, '
+                  '— quote them verbatim, so the approval records who granted it and on what words '
+                  '(as given — self-reported, never verified), '
                   'not just a flag'); sys.exit(1)
         c = json.load(open(CONTRACT)); c.update(approved=True, ts=time.time(), by=by, echo=echo); json.dump(c, open(CONTRACT, 'w'))
         print('contract approved — build may proceed.')
@@ -1068,7 +1069,7 @@ def cmd_contract(a):
         c = json.load(open(CONTRACT))
         fresh = (time.time() - c.get('ts', 0)) < (a.window or 3600)
         if c.get('approved') and fresh:
-            attrib = (f' approved by {c["by"]}: "{str(c["echo"])[:80]}"'
+            attrib = (f' approved by {c["by"]} (self-reported): "{str(c["echo"])[:80]}"'
                       if c.get('by') and c.get('echo') else '')
             print('contract check: ✅ approved + fresh.' + attrib)
             _routing_note(c.get('plan', ''))  # model-facing cost hint; never blocks the build
@@ -1806,7 +1807,7 @@ def cmd_discuss(a):
                     f'## Decision\n{a.choice or "(converged in discussion)"}\n')
             _emit_record('decision', f'{n:04d}-{_slug(a.to_decision)}.md',
                          f'# {n:04d} — {a.to_decision}\n\n{body}\n', DEC, False, a.to_decision, {'n': n})
-        print(f'discussion #{a.id} closed' + (f' → choice: {a.choice}' if a.choice else '')
+        print(f'discussion #{a.id} closed by "{me}" (self-reported)' + (f' → choice: {a.choice}' if a.choice else '')
               + ' — this thread may build. (settled: do not re-ask it)')
 
 
