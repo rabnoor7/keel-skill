@@ -2,6 +2,52 @@
 
 All notable changes to keel. Versions follow semver; `docs.py --version` reports the installed version.
 
+## [1.6.0] — 2026-07-20
+
+### Record integrity: who approved it, and who settled it (two fixes, both earned by real failures)
+
+- **Approval now records WHO and ON WHAT WORDS (agent-facing).** `contract approve` flipped a single
+  boolean that the agent could set itself — so an approval nobody granted was indistinguishable from one
+  they did, and every downstream ✓ (hook, witness, resume) inherited that hole. `approve` now **requires
+  `--by <who>` and `--echo "<the user's actual words>"`** and refuses without both; `contract check`
+  displays `approved by <by>: "<echo>"`. The same side-door in **`set --approved` is closed too** (it was a
+  second self-approve path). The echo is stored **verbatim** — doctrine is to quote the user, never to
+  paraphrase or parrot it back at them. **Nothing you see changes:** the attribution surfaces only in
+  agent-read `contract check` output, and if you ask. Stated honestly, in the tool's own words: these
+  fields raise the cost of a false record and make a witness possible — **they do not prove the approval
+  happened.**
+- **Two sessions can no longer silently overwrite each other's discussion threads.** Caught live: two
+  concurrent sessions shared one `.keel/discuss.jsonl`; thread ids were allocated from an **unlocked** read,
+  and `close` addressed a bare integer in one unscoped namespace — so one session closed a thread the other
+  had opened, recording a resolution from a conversation that thread never had. Not loud loss: a record that
+  **reads as a decision nobody made**, which is the one direction a memory tool must never fail. Now: id
+  allocation happens **under the lock** (concurrent writers can never mint the same id); each row records the
+  **writer** that opened it; `close` **appends** a status row instead of rewriting the file, so parallel
+  writers cannot clobber each other and the store keeps who-closed-what-when; readers reconcile base rows
+  with appended status rows.
+- **New refusal (deliberate, and the one behavior that can now say no where it used to say yes):** closing a
+  thread opened under a different writer label refuses, names the label and the override, and states its own
+  limit — *"Labels are self-reported, never verified — this catches an ACCIDENTAL cross-session close, it is
+  not a permission check."* Re-run with `--writer <label>` to do it on purpose. Writer identity is a
+  **best-effort hint, never proof**; `--as` / `KEEL_WRITER` set it, and an absent label **never** gates
+  anything (legacy rows close exactly as before). The already-closed message names the closer for forensics
+  — `already closed by "sam" (self-reported at close)` — and where the closer is unknown it simply says
+  `already closed` rather than inventing one.
+
+### Mixed 1.5 / 1.6 installs (verified by execution, both directions)
+
+Both shapes are readable by both versions and **no data is lost in either direction**, with one named
+asymmetry: a **1.5 reader treats a thread that 1.6 closed as still open**, because 1.5 reads only the base
+row's inline status and not the appended close. The consequence is that 1.5 **over-blocks** — the thread
+keeps showing in `discuss list` and keeps gating `contract check`. It errs toward *"still being shaped,"*
+never toward a settlement nobody made. A 1.5 `close` rewrites the store in place and **preserves** the rows
+1.6 appended (unknown keys survive the round-trip); a 1.6 reader reconciles **both** shapes — legacy inline
+statuses and appended status rows, last-wins — and degrades its forensics honestly on threads 1.5 closed.
+
+Non-adopter output is **byte-identical** to 1.5.0: `rehydrate`, `status`, and `status --line` verified
+unchanged on copies of six real projects. Every fix carries a permanent selftest assertion (77 total), each
+verified to actually fail when its fix is removed.
+
 ## [1.5.0] — 2026-07-18
 
 ### Visibility + legibility overhaul (driven by a live field complaint + a from-scratch re-audit of 94 real sessions)

@@ -98,7 +98,7 @@ never a question, never a special mode; keep it general (no different behavior w
 - **Presence line — RELAY the tool, never hand-write it.** On a turn where keel actually **captured**
   something (a decision, journal, discuss thread, checkpoint) OR has open/blocking state, run
   `docs.py status --line` and surface its output **verbatim** — it already reads e.g.
-  `▸ keel 1.5.0 · 14 decision(s) · 3/6 steps done · ✓ just saved: decision "auth via JWT" · ⚠2`. The line
+  `▸ keel 1.6.0 · 14 decision(s) · 3/6 steps done · ✓ just saved: decision "auth via JWT" · ⚠2`. The line
   says **✓ just saved: …** for a record written since the last presence (keel reporting the capture the turn
   after it lands) and **last: …** otherwise — that's the tool's call, not yours to editorialize. Do **not**
   paraphrase or invent your own `▸ keel · noted: …` line — a hand-written line drifts from the truth (and

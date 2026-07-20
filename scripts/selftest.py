@@ -173,6 +173,55 @@ def main():
     if rc == 0 or 'fresh=False' not in out:
         fails.append('attribution: legacy fielded-less contract must expire cleanly, not crash')
 
+    # Unit 1.5 · concurrency-safe discuss store (locked forever)
+    _d = dict(id=None, thread=None, choice=None, to_decision=None, as_writer=None, writer=None)
+    rc, out = _rc(docs.cmd_discuss, action='open', **{**_d, 'thread': 'cross-writer thread', 'as_writer': 'alice'})
+    _xid = int(out.split('#')[1].split(' ')[0])
+    rc, out = _rc(docs.cmd_discuss, action='close', **{**_d, 'id': _xid, 'as_writer': 'bob'})
+    if rc == 0 or 'alice' not in out or '--writer' not in out:
+        fails.append('concurrency: closing another writer\'s thread must refuse and name them + the override')
+    # honesty lock (blind-UX 1.6.0): a writer label is a self-reported hint, never proof — the refusal must
+    # never borrow permission/ownership vocabulary, or readers infer an identity check that does not exist
+    if 'self-reported' not in out or 'not a permission check' not in out:
+        fails.append('honesty: cross-writer refusal must state the label is self-reported and NOT a permission check')
+    rc, _ = _rc(docs.cmd_discuss, action='close', **{**_d, 'id': _xid, 'as_writer': 'bob', 'writer': 'alice'})
+    if rc != 0:
+        fails.append('concurrency: deliberate cross-writer close (--writer named) must succeed')
+    rc, out = _rc(docs.cmd_discuss, action='close', **{**_d, 'id': _xid, 'as_writer': 'bob', 'writer': 'alice'})
+    if rc == 0 or 'already closed by "bob" (self-reported at close)' not in out:
+        fails.append('concurrency: re-close must refuse naming WHO closed it (the incident forensics)')
+    # the close-attributor must never be labelled "writer" — that word means the OPENER everywhere else
+    if 'writer' in out.split('already closed')[-1]:
+        fails.append('honesty: already-closed line must not call the closer a "writer" (opener/closer collision)')
+    with open(os.path.join('.keel', 'discuss.jsonl'), 'a') as _fh:
+        _fh.write(_cj.dumps({'id': 97, 'thread': 'legacy row no writer', 'status': 'open', 'ts': 0}) + '\n')
+        _fh.write(_cj.dumps({'id': 98, 'thread': 'legacy row no writer 2', 'status': 'open', 'ts': 0}) + '\n')
+        _fh.write(_cj.dumps({'kind': 'reconciliation-note', 'note': 'tolerated invisibly'}) + '\n')
+    if 97 not in [r['id'] for r in docs._discuss_open()]:
+        fails.append('concurrency: legacy writer-less rows must stay visible/open (forever-compat)')
+    rc, _ = _rc(docs.cmd_discuss, action='close', **{**_d, 'id': 97, 'as_writer': 'anyone'})
+    if rc != 0:
+        fails.append('concurrency: legacy writer-less rows must close without --writer (no gate on absent data)')
+    # absent identity NEVER gates, even when the caller names a --writer: the guard keys on RECORDED identity
+    # existing, not on it matching (without this the writer-less path passes by coincidence, not by design)
+    rc, _ = _rc(docs.cmd_discuss, action='close', **{**_d, 'id': 98, 'as_writer': 'anyone', 'writer': 'ghost'})
+    if rc != 0:
+        fails.append('concurrency: writer-less legacy rows must never gate on absent identity, even with --writer named')
+    import subprocess as _sp, sys as _sys
+    _dp = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'docs.py')
+    _before = {r['id'] for r in docs._discuss_rows()}
+    _procs = [_sp.Popen([_sys.executable, '-c',
+                         'import subprocess,sys\n'
+                         + 'for i in range(6): subprocess.run([sys.executable, %r, "discuss", "open", "--thread", '
+                           '"storm-%s-"+str(i), "--as", "W%s"], capture_output=True)' % (_dp, w, w)])
+              for w in ('a', 'b')]
+    for _pp in _procs:
+        _pp.wait()
+    _after = [r['id'] for r in docs._discuss_rows()]
+    if len(_after) != len(set(_after)) or len(set(_after) - _before) != 12:
+        fails.append(f'concurrency: two-writer storm must yield 12 unique new ids, zero lost/duplicated '
+                     f'(got {len(set(_after) - _before)} new, {len(_after) - len(set(_after))} dup)')
+
     # T2 · FALSE-claim fixes locked forever (1.3.1):
     import json as _json
     docs._ensure(docs.STATE)

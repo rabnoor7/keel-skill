@@ -264,6 +264,36 @@ def _append_jsonl(p, obj):
         f.write(json.dumps(obj) + '\n')
 
 
+def _writer_id(a=None):
+    # Session identity is a best-effort HINT, never proof: an explicit --as / KEEL_WRITER beats any
+    # guess; the ppid fallback is a breadcrumb (keel is chat-blind and cannot know session boundaries).
+    w = (getattr(a, 'as_writer', None) or os.environ.get('KEEL_WRITER') or '').strip()
+    return w or f'pid{os.getppid()}'
+
+
+def _discuss_rows():
+    """Reconciled discuss state: base open rows (legacy inline-status rows included) overridden by
+    append-only status rows (kind='status', last-wins per id). Note/unknown rows tolerated invisibly."""
+    base, status = {}, []
+    for r in _load_jsonl(DISCUSS):
+        if r.get('kind') == 'status':
+            status.append(r)
+        elif isinstance(r.get('id'), int) and 'thread' in r:
+            base[r['id']] = dict(r)
+    for s in status:
+        t = base.get(s.get('id'))
+        if t is not None:
+            t['status'] = s.get('status', t.get('status'))
+            if s.get('choice') is not None:
+                t['choice'] = s['choice']
+            t['closed_ts'] = s.get('ts'); t['closed_by'] = s.get('writer')
+    return list(base.values())
+
+
+def _discuss_open():
+    return [r for r in _discuss_rows() if r.get('status') == 'open']
+
+
 def _load_jsonl(p):
     out = []
     for line in _read(p).splitlines():
@@ -626,7 +656,7 @@ def cmd_rehydrate(a):
         for r in esc_open[:4]:
             print(f'    #{r["id"]} [{r.get("because")}] {r.get("question", "")[:88]}')
         print('    → docs.py escalate resolve <id> --choice ...')
-    disc_open = [r for r in _load_jsonl(DISCUSS) if r.get('status') == 'open']
+    disc_open = _discuss_open()
     if disc_open:  # advisory by design: session start orients; the hard gate lives in `contract check`
         print(f'\n[~] DISCUSSION MODE — {len(disc_open)} thread(s) still being shaped (builds gate on these):')
         for r in disc_open[:4]:
@@ -1023,7 +1053,7 @@ def cmd_contract(a):
         if esc_open:
             print(f'contract check: ✗ BLOCKED-ON-USER — {len(esc_open)} open escalation(s) (#'
                   + ', #'.join(str(r["id"]) for r in esc_open[:4]) + '). Resolve before building.'); sys.exit(1)
-        disc_open = [r for r in _load_jsonl(DISCUSS) if r.get('status') == 'open']
+        disc_open = _discuss_open()
         if disc_open:  # T1 teeth: shaping-in-progress gates the BUILD moment, and only the build moment
             print(f'contract check: ✗ DISCUSSION OPEN — {len(disc_open)} thread(s) still being shaped (#'
                   + ', #'.join(str(r["id"]) for r in disc_open[:4])
@@ -1605,7 +1635,7 @@ def cmd_status(a):
     js = _journals_sorted()
     rm = _roadmap()
     asks_open = [x for x in _load_asks() if x['status'] == 'open']
-    disc_open = [r for r in _load_jsonl(DISCUSS) if r.get('status') == 'open']
+    disc_open = _discuss_open()
     esc_open = [r for r in _load_jsonl(ESCALATIONS) if r.get('status') == 'open']
     st = _stance()
     contract = json.load(open(CONTRACT)) if os.path.exists(CONTRACT) else None
@@ -1727,31 +1757,49 @@ def cmd_discuss(a):
         threads = a.thread if isinstance(a.thread, list) else ([a.thread] if a.thread else [])
         if not threads:
             sys.exit('discuss open: needs --thread "<direction>" (repeat --thread to arm a multi-part input as a set)')
-        rows = _load_jsonl(DISCUSS)
-        nid = max((r.get('id', 0) for r in rows), default=0)
-        for t in threads:
-            nid += 1
-            _append_jsonl(DISCUSS, {'id': nid, 'thread': t, 'status': 'open', 'ts': time.time()})
-            print(f'DISCUSS #{nid} OPEN — "{t}".')
+        w = _writer_id(a)
+        with _FileLock(DISCUSS):  # allocation under the lock: two sessions can never mint the same id
+            rows = _load_jsonl(DISCUSS)
+            nid = max((r.get('id', 0) for r in rows if isinstance(r.get('id'), int)), default=0)
+            for t in threads:
+                nid += 1
+                _append_jsonl(DISCUSS, {'id': nid, 'thread': t, 'status': 'open', 'ts': time.time(), 'writer': w})
+                print(f'DISCUSS #{nid} OPEN — "{t}".')
         print('Shaping mode: decompose each into steelmanned either/or choices, one fork at a time; harvest '
               'every attachment the user adds to an answer as its OWN thread. Builds gate until EACH converges '
               '→ docs.py discuss close <id> [--choice "..."]  (discuss list shows what is still open)')
     elif a.action == 'list':
-        rows = [r for r in _load_jsonl(DISCUSS) if r.get('status') == 'open']
+        rows = _discuss_open()
         if not rows:
             print('(no open discussion threads)')
         for r in rows:
-            print(f'  #{r["id"]} {r.get("thread", "")[:90]}')
+            wtag = f'  [writer: {r["writer"]}]' if r.get('writer') else ''
+            print(f'  #{r["id"]} {r.get("thread", "")[:90]}{wtag}')
     elif a.action == 'close':
         if a.id is None:
             sys.exit('discuss close: needs the thread id (see: discuss list)')
+        me = _writer_id(a)
         with _FileLock(DISCUSS):
-            rows = _load_jsonl(DISCUSS)
-            tgt = next((r for r in rows if r.get('id') == a.id and r.get('status') == 'open'), None)
+            state = _discuss_rows()
+            tgt = next((r for r in state if r.get('id') == a.id and r.get('status') == 'open'), None)
             if not tgt:
-                sys.exit(f'no open discussion #{a.id}')
-            tgt['status'] = 'closed'; tgt['choice'] = a.choice; tgt['closed_ts'] = time.time()
-            _atomic_write(DISCUSS, ''.join(json.dumps(r) + '\n' for r in rows))
+                done = next((r for r in state if r.get('id') == a.id), None)
+                if done and done.get('status') == 'closed':
+                    # "closed by", never "writer" — `writer` elsewhere means who OPENED a thread, and
+                    # reusing it here let a reader misattribute the close (blind-UX 1.6.0 catch)
+                    by = f' by "{done["closed_by"]}" (self-reported at close)' if done.get('closed_by') else ''
+                    print(f'no open discussion #{a.id} — already closed{by}. (settled: do not re-ask it)'); sys.exit(1)
+                print(f'no open discussion #{a.id}'); sys.exit(1)
+            their = tgt.get('writer')
+            if their and their != me and getattr(a, 'writer', None) != their:
+                print(f'discuss close: #{a.id} was opened under the writer label "{their}"; you are running '
+                      f'as "{me}". Labels are self-reported, never verified — this catches an ACCIDENTAL '
+                      f'cross-session close, it is not a permission check. To close it deliberately: '
+                      f're-run with --writer {their}'); sys.exit(1)
+            # append-only close: the open row is never rewritten, so concurrent sessions cannot clobber
+            # each other and the store keeps who-closed-what-when (the incident's missing forensics)
+            _append_jsonl(DISCUSS, {'kind': 'status', 'id': a.id, 'status': 'closed', 'choice': a.choice,
+                                    'ts': time.time(), 'writer': me})
         if a.to_decision:  # promote the converged choice to a durable, searchable ADR (same move as escalate)
             n = _next_adr()
             body = (f'## Context\nDiscussion #{a.id}: {tgt.get("thread")}\n\n'
@@ -2454,7 +2502,8 @@ def main():
     p.add_argument('--memory', choices=['confirm', 'silent']); p.add_argument('--note'); p.set_defaults(fn=cmd_stance)
     p = sub.add_parser('discuss'); p.add_argument('action', choices=['open', 'close', 'list'])
     p.add_argument('id', nargs='?', type=int); p.add_argument('--thread', action='append'); p.add_argument('--choice')
-    p.add_argument('--to-decision', dest='to_decision'); p.set_defaults(fn=cmd_discuss)
+    p.add_argument('--to-decision', dest='to_decision'); p.add_argument('--as', dest='as_writer')
+    p.add_argument('--writer'); p.set_defaults(fn=cmd_discuss)
     p = sub.add_parser('deliverables'); p.add_argument('dirs', nargs='*'); p.set_defaults(fn=cmd_deliverables)
     p = sub.add_parser('status'); p.add_argument('--line', action='store_true'); p.set_defaults(fn=cmd_status)
     p = sub.add_parser('escalate'); p.add_argument('action', choices=['raise', 'list', 'resolve', 'retract'])
